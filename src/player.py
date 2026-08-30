@@ -11,7 +11,6 @@ def parse_srt(srt_path_or_content):
     word_map = {}
     content = ""
     
-    # Check if input is an existing file path, otherwise treat as raw SRT text
     if os.path.exists(srt_path_or_content):
         with open(srt_path_or_content, "r", encoding="utf-8") as f:
             content = f.read()
@@ -116,7 +115,7 @@ def play_audio(file_path):
     except Exception:
         print(f"[!] Could not play audio automatically. Output file saved at: {file_path}")
 
-def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False):
+def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, cache_dir=None):
     word_map = parse_srt(srt_source)
     if not word_map:
         print("[Error] Subtitle map is empty or could not be parsed.")
@@ -125,12 +124,10 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False):
     stream_url = None
     master_audio = None
     
-    if is_youtube:
-        stream_url = get_youtube_audio_url(audio_source)
-        if not stream_url:
-            print("[Error] Failed to resolve YouTube audio stream URL.")
-            sys.exit(1)
-    else:
+    if is_youtube and cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        
+    if not is_youtube:
         print(f"[*] Loading master database audio from local file: {audio_source}")
         master_audio = AudioSegment.from_file(audio_source)
     
@@ -144,17 +141,42 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False):
     for w in words:
         if w in word_map:
             start_ms, duration_ms = word_map[w]
-            print(f"  - Found '{w}': seek to {start_ms}ms, duration {duration_ms}ms")
             
-            if is_youtube:
-                wav_bytes = extract_remote_slice(stream_url, start_ms, duration_ms)
-                if not wav_bytes:
-                    print(f"    [!] Failed to stream '{w}' from YouTube")
-                    continue
-                word_audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
+            # Check cache in YouTube mode
+            cached_path = None
+            if is_youtube and cache_dir:
+                cached_path = os.path.join(cache_dir, f"{w}.wav")
+                
+            if cached_path and os.path.exists(cached_path):
+                print(f"  - [Cache Hit] '{w}' loaded locally.")
+                word_audio = AudioSegment.from_file(cached_path, format="wav")
             else:
-                word_audio = master_audio[start_ms : start_ms + duration_ms]
+                print(f"  - Found '{w}': seek to {start_ms}ms, duration {duration_ms}ms")
+                if is_youtube:
+                    # Lazy resolve URL on-demand
+                    if not stream_url:
+                        stream_url = get_youtube_audio_url(audio_source)
+                        if not stream_url:
+                            print("[Error] Failed to resolve YouTube audio stream URL.")
+                            sys.exit(1)
+                            
+                    wav_bytes = extract_remote_slice(stream_url, start_ms, duration_ms)
+                    if not wav_bytes:
+                        print(f"    [!] Failed to stream '{w}' from YouTube")
+                        continue
+                    word_audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
+                    
+                    # Save to local cache dir
+                    if cached_path:
+                        try:
+                            word_audio.export(cached_path, format="wav")
+                            print(f"    [+] Cached '{w}' -> {cached_path}")
+                        except Exception:
+                            pass
+                else:
+                    word_audio = master_audio[start_ms : start_ms + duration_ms]
             
+            # Trim leading/trailing silence from the slice for crisp playback
             nonsilent_ranges = detect_nonsilent(word_audio, min_silence_len=50, silence_thresh=-35)
             if nonsilent_ranges:
                 word_audio = word_audio[nonsilent_ranges[0][0] : nonsilent_ranges[-1][1]]
@@ -179,6 +201,7 @@ if __name__ == "__main__":
     parser.add_argument("--srt", help="Path to the local SRT subtitles file")
     parser.add_argument("--audio", default="database_speech.mp4", help="Path to the local video/audio database file")
     parser.add_argument("--youtube", help="YouTube Video ID or URL to stream from on-the-fly")
+    parser.add_argument("--cache-dir", default=".yt_cache", help="Directory to cache fetched audio slices (YouTube mode only)")
     
     args = parser.parse_args()
     
@@ -207,7 +230,6 @@ if __name__ == "__main__":
         if os.path.exists(sd_fallback):
             srt_source = sd_fallback
         else:
-            # Check current dir fallback
             local_fallback = "database_speech.srt"
             if os.path.exists(local_fallback):
                 srt_source = local_fallback
@@ -220,4 +242,4 @@ if __name__ == "__main__":
         print(f"[Error] Could not locate local or remote SRT source.")
         sys.exit(1)
         
-    synthesize_sentence(args.sentence, srt_source, audio_source, is_youtube=is_youtube)
+    synthesize_sentence(args.sentence, srt_source, audio_source, is_youtube=is_youtube, cache_dir=args.cache_dir)
