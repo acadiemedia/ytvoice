@@ -35,7 +35,7 @@ def get_youtube_audio_url(video_id_or_url):
     url = video_id_or_url
     if not url.startswith("http"):
         url = f"https://youtube.com/watch?v={video_id_or_url}"
-    cmd = ["yt-dlp", "-g", "-f", "bestaudio", url]
+    cmd = [sys.executable, "-m", "yt_dlp", "-g", "-f", "bestaudio", url]
     try:
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
         return result.stdout.strip()
