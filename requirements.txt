@@ -1,0 +1,7 @@
+# Core Playback Dependencies
+pydub>=0.25.1
+yt-dlp>=2023.01.01
+
+# Compiler Dependencies (Optional - only needed to compile custom databases)
+numpy>=1.21.0
+soundfile>=0.10.0
