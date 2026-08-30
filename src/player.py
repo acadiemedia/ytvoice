@@ -45,15 +45,17 @@ def fetch_youtube_subtitles(video_id_or_url):
     temp_prefix = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"yt_subs_{video_id_or_url.replace('-', '_')}")
     cmd = [
         sys.executable, "-m", "yt_dlp",
-        "--write-subs", "--sub-langs", "en",
+        "--write-subs", "--sub-langs", "en.*,en",
         "--skip-download", "--convert-subs", "srt",
         "-o", temp_prefix,
         url
     ]
     try:
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
-        srt_file = f"{temp_prefix}.en.srt"
-        if os.path.exists(srt_file):
+        import glob
+        srt_files = glob.glob(f"{temp_prefix}.*.srt")
+        if srt_files:
+            srt_file = srt_files[0]
             with open(srt_file, "r", encoding="utf-8") as f:
                 content = f.read()
             os.remove(srt_file) # Clean up
