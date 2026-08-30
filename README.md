@@ -10,7 +10,7 @@ A lightweight proof-of-concept concatenative text-to-speech playhead engine. It 
 2. **Captions & Indexing**: 
    Uploading the `.srt` caption track to YouTube forces YouTube to display the subtitles in sync and index the audio track, making it searchable.
 
-3. **Synthesis (`test_playhead_synth.py`)**: 
+3. **Synthesis (`playhead_synth.py`)**: 
    The client player parses the `.srt` timings in-memory. When given a sentence, it dynamically seeks the video player to the starting millisecond of each word, plays the word for its duration, and pauses—effectively making the video talk.
 
 ## Setup & Requirements
@@ -30,10 +30,10 @@ python3 make_database_video.py
 ```
 This generates the `.mp4`, `.srt`, and `.txt` files directly onto the SD Card.
 
-### 2. Test Playback Proof of Concept
+### 2. Run Playhead Speech Synthesizer
 To stitch a sentence dynamically from the compiled video file using the SRT timings:
 ```bash
-python3 test_playhead_synth.py "hello steve online active"
+python3 playhead_synth.py "hello steve online active"
 ```
 
 ## Global Command Integration
