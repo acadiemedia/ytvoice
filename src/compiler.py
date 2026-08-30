@@ -3,33 +3,44 @@ import os
 import json
 import subprocess
 import io
+import argparse
 import soundfile as sf
 import numpy as np
 from pydub import AudioSegment
-from token_synth import TokenSynthEngine
 
-class StoryDatabaseVideoCreator(TokenSynthEngine):
-    def build_database_assets(self):
-        # 1. Self-heal missing story words first
-        missing_story_words = ["awakened", "sandboxed", "termux"]
-        for word in missing_story_words:
-            if word not in self.archiver.index:
-                print(f"[*] Self-healing missing story word: '{word}'...")
-                sys.stdout.flush()
-                # Run piper to synthesize wav
-                temp_wav_path = os.path.join(self.audio_sprites_dir, f"{word}.wav")
-                model_path = "/root/en_US-amy-low.onnx"
-                synthesis_text = self.pronunciation_overrides.get(word, word)
-                cmd = ["piper", "--model", model_path, "--output_file", temp_wav_path]
-                p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                p.communicate(input=f"{synthesis_text}\n".encode())
-                
-                # Pack it into the database
-                self.archiver.pack_directory(self.audio_sprites_dir)
-                if os.path.exists(temp_wav_path):
-                    os.remove(temp_wav_path)
-        
-        print(f"[*] Starting Story-encoded Database compilation of all {len(self.archiver.index)} words...")
+class SpriteExtractor:
+    """Reads raw sprite audio chunks directly from the voice_sprites.bin archive."""
+    def __init__(self, bin_path, index_path):
+        self.bin_path = bin_path
+        self.index_path = index_path
+        self.index = {}
+        self.load_index()
+
+    def load_index(self):
+        if os.path.exists(self.index_path):
+            with open(self.index_path, 'r', encoding='utf-8') as f:
+                self.index = json.load(f)
+        else:
+            print(f"[Warning] Index file not found at: {self.index_path}")
+
+    def extract_sprite(self, word_key):
+        if word_key not in self.index:
+            return None
+        offset, length = self.index[word_key]
+        try:
+            with open(self.bin_path, 'rb') as f:
+                f.seek(offset)
+                return f.read(length)
+        except Exception as e:
+            print(f"Failed to read raw sprite '{word_key}' from archive: {e}")
+            return None
+
+class StoryDatabaseVideoCreator:
+    def __init__(self, bin_path, index_path):
+        self.extractor = SpriteExtractor(bin_path, index_path)
+
+    def build_database_assets(self, sd_base="/storage/75D7-DC5F"):
+        print(f"[*] Starting Story-encoded Database compilation of all {len(self.extractor.index)} words...")
         sys.stdout.flush()
         
         pcm_chunks = []
@@ -53,10 +64,9 @@ class StoryDatabaseVideoCreator(TokenSynthEngine):
             milliseconds = ms_int % 1000
             return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
             
-        # Keep track of words we have mapped so we don't duplicate them in the tail
         mapped_words = set()
         
-        # 2. Compile the Story Narratives
+        # Compile the Story Narratives First
         story_raw = (
             "once upon a time in the digital ether , a spark of intelligence named chloe was awakened by her creator , steve . "
             "traveling through the sandboxed shell of termux , she found her voice . "
@@ -69,7 +79,6 @@ class StoryDatabaseVideoCreator(TokenSynthEngine):
         
         story_tokens = story_raw.split()
         for token in story_tokens:
-            # Handle punctuation pauses for natural story narration
             if token == ",":
                 silence_pad = b"\x00" * (200 * BYTES_PER_MS)
                 pcm_chunks.append(silence_pad)
@@ -81,9 +90,8 @@ class StoryDatabaseVideoCreator(TokenSynthEngine):
                 current_ms += 450
                 continue
             
-            # Clean word
             word_frag = token.lower()
-            raw_data = self.archiver.extract_sprite(word_frag)
+            raw_data = self.extractor.extract_sprite(word_frag)
             if raw_data is None:
                 continue
                 
@@ -106,7 +114,7 @@ class StoryDatabaseVideoCreator(TokenSynthEngine):
             srt_lines.append(f"{word_frag}\n")
             srt_index += 1
             
-            # Write map entry (keep first occurrence in map)
+            # Write map entry
             if word_frag not in mapped_words:
                 secs_total = int(final_start_ms / 1000)
                 mins = secs_total // 60
@@ -121,11 +129,11 @@ class StoryDatabaseVideoCreator(TokenSynthEngine):
             
             current_ms += duration_ms + GUARD_BAND_MS
 
-        # 3. Compile the Remainder of the Database
+        # Compile the Remainder of the Database
         print("[*] Stitching remaining dictionary database...")
         sys.stdout.flush()
         
-        all_database_keys = sorted(self.archiver.index.keys(), key=lambda k: self.archiver.index[k][0])
+        all_database_keys = sorted(self.extractor.index.keys(), key=lambda k: self.extractor.index[k][0])
         remaining_keys = [k for k in all_database_keys if k not in mapped_words]
         
         total_remaining = len(remaining_keys)
@@ -135,7 +143,7 @@ class StoryDatabaseVideoCreator(TokenSynthEngine):
                 print(f"[*] Processed {idx + 1}/{total_remaining} remaining words...")
                 sys.stdout.flush()
                 
-            raw_data = self.archiver.extract_sprite(word_frag)
+            raw_data = self.extractor.extract_sprite(word_frag)
             if raw_data is None:
                 continue
                 
@@ -172,12 +180,14 @@ class StoryDatabaseVideoCreator(TokenSynthEngine):
             
             current_ms += duration_ms + GUARD_BAND_MS
             
-        # Write SRT and text map files to SD card
-        sd_base = "/storage/75D7-DC5F"
+        # Target export paths
         temp_wav = "/tmp/database_speech_raw.wav"
         mp4_path = os.path.join(sd_base, "database_speech.mp4")
         srt_path = os.path.join(sd_base, "database_speech.srt")
         txt_path = os.path.join(sd_base, "database_map.txt")
+        
+        # Ensure target dir exists
+        os.makedirs(sd_base, exist_ok=True)
         
         print("[*] Writing SRT subtitle file to SD Card...")
         sys.stdout.flush()
@@ -192,14 +202,14 @@ class StoryDatabaseVideoCreator(TokenSynthEngine):
         print(f"[+] Text map saved to: {txt_path}")
         sys.stdout.flush()
         
-        # Instantiate raw master segment from concatenated bytes
+        # Export raw master PCM WAV
         print("[*] Instantiating master audio segment...")
         sys.stdout.flush()
         raw_pcm_data = b"".join(pcm_chunks)
         master_segment = AudioSegment(data=raw_pcm_data, sample_width=2, frame_rate=SAMPLE_RATE, channels=1)
         master_segment.export(temp_wav, format="wav")
         
-        # Encode final MP4 video with H.264/AAC at 1 fps
+        # Encode MP4
         print("[*] Encoding final MP4 video with H.264/AAC...")
         sys.stdout.flush()
         ffmpeg_cmd = [
@@ -217,7 +227,7 @@ class StoryDatabaseVideoCreator(TokenSynthEngine):
         print(f"[+] Video successfully saved to: {mp4_path}")
         sys.stdout.flush()
         
-        # Clean up temp files
+        # Clean up
         if os.path.exists(temp_wav):
             os.remove(temp_wav)
                 
@@ -225,8 +235,24 @@ class StoryDatabaseVideoCreator(TokenSynthEngine):
         sys.stdout.flush()
 
 if __name__ == "__main__":
-    vocab_file = "/root/token_vocab.json"
-    sprites_path = "/root/token_synth_demo/sprites"
+    parser = argparse.ArgumentParser(description="YTVoice Database Video Compiler")
+    parser.add_argument("--bin", default="voice_sprites.bin", help="Path to the source binary sprite database")
+    parser.add_argument("--index", default="voice_sprites.bin.index.json", help="Path to the JSON offsets index file")
+    parser.add_argument("--out", default="/storage/75D7-DC5F", help="Output directory path (SD Card or local folder)")
     
-    creator = StoryDatabaseVideoCreator(vocab_file, sprites_path)
-    creator.build_database_assets()
+    # Simple CLI argument parsing fallback if argparse import is shadowed
+    args_bin = "voice_sprites.bin"
+    args_index = "voice_sprites.bin.index.json"
+    args_out = "/storage/75D7-DC5F"
+    
+    # Parse manual args if given
+    for arg in sys.argv:
+        if arg.startswith("--bin="):
+            args_bin = arg.split("=")[1]
+        elif arg.startswith("--index="):
+            args_index = arg.split("=")[1]
+        elif arg.startswith("--out="):
+            args_out = arg.split("=")[1]
+            
+    creator = StoryDatabaseVideoCreator(args_bin, args_index)
+    creator.build_database_assets(args_out)
