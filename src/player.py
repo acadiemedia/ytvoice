@@ -36,6 +36,28 @@ def parse_srt(srt_path_or_content):
             word_map[word] = (start_ms, end_ms - start_ms)
     return word_map
 
+def segment_word(word, word_map):
+    """
+    Greedy recursive prefix matching to segment an unknown word into
+    known sub-word pieces existing in the database (e.g., 'haba' -> 'ha' + 'ba').
+    """
+    if not word:
+        return []
+    if word in word_map:
+        return [word]
+        
+    # Attempt to find the longest matching prefix
+    for i in range(len(word), 0, -1):
+        prefix = word[:i]
+        if prefix in word_map:
+            suffix = word[i:]
+            if not suffix:
+                return [prefix]
+            suffix_segments = segment_word(suffix, word_map)
+            if suffix_segments is not None:
+                return [prefix] + suffix_segments
+    return None
+
 def fetch_youtube_subtitles(video_id_or_url):
     print(f"[*] Fetching subtitles directly from YouTube: {video_id_or_url}...")
     url = video_id_or_url
@@ -138,10 +160,20 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
     words = clean_sentence.lower().split()
     output_audio = AudioSegment.empty()
     
+    # Expand composite/unknown words into sub-word tokens
+    processed_words = []
+    for w in words:
+        segments = segment_word(w, word_map)
+        if segments:
+            for seg in segments:
+                processed_words.append((seg, True))
+        else:
+            processed_words.append((w, False))
+            
     print(f"[*] Stitching sentence: '{sentence}'")
     from pydub.silence import detect_nonsilent
-    for w in words:
-        if w in word_map:
+    for w, is_found in processed_words:
+        if is_found:
             start_ms, duration_ms = word_map[w]
             
             # Check cache in YouTube mode
@@ -220,11 +252,21 @@ if __name__ == "__main__":
             if not srt_source:
                 print("[*] No custom subtitles found on YouTube video. Falling back to local default search.")
                 srt_source = "database_speech.srt"
+    else:
+        if not os.path.exists(audio_source):
+            sd_fallback = "/storage/75D7-DC5F/database_speech.mp4"
+            if os.path.exists(sd_fallback):
+                audio_source = sd_fallback
+                
     # Local SRT fallback checks
     if isinstance(srt_source, str) and not os.path.exists(srt_source):
-        local_fallback = "database_speech.srt"
-        if os.path.exists(local_fallback):
-            srt_source = local_fallback
+        sd_fallback = "/storage/75D7-DC5F/database_speech.srt"
+        if os.path.exists(sd_fallback):
+            srt_source = sd_fallback
+        else:
+            local_fallback = "database_speech.srt"
+            if os.path.exists(local_fallback):
+                srt_source = local_fallback
 
     if not is_youtube and not os.path.exists(audio_source):
         print(f"[Error] Could not locate local MP4 file: {audio_source}")
