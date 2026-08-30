@@ -30,10 +30,16 @@ python3 make_database_video.py
 ```
 This generates the `.mp4`, `.srt`, and `.txt` files directly onto the SD Card.
 
-### 2. Run Playhead Speech Synthesizer
-To stitch a sentence dynamically from the compiled video file using the SRT timings:
+### 2. Run Playhead Speech Synthesizer (Local File Mode)
+To stitch a sentence dynamically from the local video file using the SRT timings:
 ```bash
 python3 playhead_synth.py "hello steve online active"
+```
+
+### 3. Run Playhead Speech Synthesizer (YouTube Cloud Streaming Mode)
+Once the video is uploaded to YouTube, the local video file is no longer needed! You can stream the audio slices directly from the cloud using the `--youtube` flag:
+```bash
+python3 playhead_synth.py "hello steve online active" --youtube YOUR_YOUTUBE_VIDEO_ID
 ```
 
 ## Global Command Integration
