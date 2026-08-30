@@ -7,12 +7,19 @@ import io
 import string
 from pydub import AudioSegment
 
-def parse_srt(srt_path):
+def parse_srt(srt_path_or_content):
     word_map = {}
-    if not os.path.exists(srt_path):
+    content = ""
+    
+    # Check if input is an existing file path, otherwise treat as raw SRT text
+    if os.path.exists(srt_path_or_content):
+        with open(srt_path_or_content, "r", encoding="utf-8") as f:
+            content = f.read()
+    else:
+        content = srt_path_or_content
+        
+    if not content:
         return word_map
-    with open(srt_path, "r", encoding="utf-8") as f:
-        content = f.read()
     
     pattern = re.compile(r"(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.+)")
     matches = pattern.findall(content)
@@ -29,6 +36,32 @@ def parse_srt(srt_path):
         if word not in word_map:
             word_map[word] = (start_ms, end_ms - start_ms)
     return word_map
+
+def fetch_youtube_subtitles(video_id_or_url):
+    print(f"[*] Fetching subtitles directly from YouTube: {video_id_or_url}...")
+    url = video_id_or_url
+    if not url.startswith("http"):
+        url = f"https://youtube.com/watch?v={video_id_or_url}"
+        
+    temp_prefix = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"yt_subs_{video_id_or_url.replace('-', '_')}")
+    cmd = [
+        sys.executable, "-m", "yt_dlp",
+        "--write-subs", "--sub-langs", "en",
+        "--skip-download", "--convert-subs", "srt",
+        "-o", temp_prefix,
+        url
+    ]
+    try:
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
+        srt_file = f"{temp_prefix}.en.srt"
+        if os.path.exists(srt_file):
+            with open(srt_file, "r", encoding="utf-8") as f:
+                content = f.read()
+            os.remove(srt_file) # Clean up
+            return content
+    except Exception:
+        pass
+    return None
 
 def get_youtube_audio_url(video_id_or_url):
     print(f"[*] Resolving YouTube direct stream URL for ID: {video_id_or_url}...")
@@ -83,10 +116,12 @@ def play_audio(file_path):
     except Exception:
         print(f"[!] Could not play audio automatically. Output file saved at: {file_path}")
 
-def synthesize_sentence(sentence, srt_path, audio_source, is_youtube=False):
-    print(f"[*] Loading coordinate map from: {srt_path}")
-    word_map = parse_srt(srt_path)
-    
+def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False):
+    word_map = parse_srt(srt_source)
+    if not word_map:
+        print("[Error] Subtitle map is empty or could not be parsed.")
+        sys.exit(1)
+        
     stream_url = None
     master_audio = None
     
@@ -141,34 +176,48 @@ def synthesize_sentence(sentence, srt_path, audio_source, is_youtube=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="YTVoice Playhead Synthesizer")
     parser.add_argument("sentence", help="The sentence you want to synthesize")
-    parser.add_argument("--srt", default="database_speech.srt", help="Path to the SRT subtitles file")
+    parser.add_argument("--srt", help="Path to the local SRT subtitles file")
     parser.add_argument("--audio", default="database_speech.mp4", help="Path to the local video/audio database file")
     parser.add_argument("--youtube", help="YouTube Video ID or URL to stream from on-the-fly")
     
     args = parser.parse_args()
-    srt_path = args.srt
+    
+    srt_source = args.srt
     audio_source = args.audio
     is_youtube = bool(args.youtube)
     
     if is_youtube:
         audio_source = args.youtube
+        # Fetch subtitles from YouTube if local SRT path was not provided
+        if not srt_source:
+            print(f"[*] No local SRT provided. Fetching subtitles from video...")
+            srt_source = fetch_youtube_subtitles(args.youtube)
+            if not srt_source:
+                print("[*] No custom subtitles found on YouTube video. Falling back to local default search.")
+                srt_source = "database_speech.srt"
     else:
         if not os.path.exists(audio_source):
             sd_fallback = "/storage/75D7-DC5F/database_speech.mp4"
             if os.path.exists(sd_fallback):
                 audio_source = sd_fallback
                 
-    if not os.path.exists(srt_path):
+    # Local SRT fallback checks
+    if isinstance(srt_source, str) and not os.path.exists(srt_source):
         sd_fallback = "/storage/75D7-DC5F/database_speech.srt"
         if os.path.exists(sd_fallback):
-            srt_path = sd_fallback
+            srt_source = sd_fallback
+        else:
+            # Check current dir fallback
+            local_fallback = "database_speech.srt"
+            if os.path.exists(local_fallback):
+                srt_source = local_fallback
 
     if not is_youtube and not os.path.exists(audio_source):
         print(f"[Error] Could not locate local MP4 file: {audio_source}")
         sys.exit(1)
         
-    if not os.path.exists(srt_path):
-        print(f"[Error] Could not locate SRT file: {srt_path}")
+    if isinstance(srt_source, str) and not os.path.exists(srt_source):
+        print(f"[Error] Could not locate local or remote SRT source.")
         sys.exit(1)
         
-    synthesize_sentence(args.sentence, srt_path, audio_source, is_youtube=is_youtube)
+    synthesize_sentence(args.sentence, srt_source, audio_source, is_youtube=is_youtube)
