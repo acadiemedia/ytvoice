@@ -144,14 +144,18 @@ def get_youtube_audio_url(video_id_or_url):
         print(f"[!] yt-dlp error: Failed to retrieve video stream. {e.stderr.strip()}")
         return None
 
-def extract_remote_slice(stream_url, start_ms, duration_ms):
+def extract_audio_slice(source_path_or_url, start_ms, duration_ms):
+    """
+    Slices a small segment of audio from a local file or remote URL on-the-fly
+    using ffmpeg range seeks, keeping memory overhead minimal.
+    """
     start_sec = start_ms / 1000.0
     dur_sec = duration_ms / 1000.0
     cmd = [
         "ffmpeg", "-y",
         "-ss", f"{start_sec:.3f}",
         "-t", f"{dur_sec:.3f}",
-        "-i", stream_url,
+        "-i", source_path_or_url,
         "-f", "wav",
         "-"
     ]
@@ -188,14 +192,9 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
         sys.exit(1)
         
     stream_url = None
-    master_audio = None
     
-    if is_youtube and cache_dir:
+    if cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
-        
-    if not is_youtube:
-        print(f"[*] Loading master database audio from local file: {audio_source}")
-        master_audio = AudioSegment.from_file(audio_source)
     
     # Secure punctuation cleansing pattern
     clean_sentence = sentence.translate(str.maketrans('', '', string.punctuation))
@@ -218,9 +217,9 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
         if is_found:
             start_ms, duration_ms = word_map[w]
             
-            # Check cache in YouTube mode
+            # Check cache
             cached_path = None
-            if is_youtube and cache_dir:
+            if cache_dir:
                 cached_path = os.path.join(cache_dir, f"{w}.wav")
                 
             if cached_path and os.path.exists(cached_path):
@@ -235,22 +234,23 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
                         if not stream_url:
                             print("[Error] Failed to resolve YouTube audio stream URL.")
                             sys.exit(1)
-                            
-                    wav_bytes = extract_remote_slice(stream_url, start_ms, duration_ms)
-                    if not wav_bytes:
-                        print(f"    [!] Failed to stream '{w}' from YouTube")
-                        continue
-                    word_audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
-                    
-                    # Save to local cache dir
-                    if cached_path:
-                        try:
-                            word_audio.export(cached_path, format="wav")
-                            print(f"    [+] Cached '{w}' -> {cached_path}")
-                        except Exception:
-                            pass
+                    wav_bytes = extract_audio_slice(stream_url, start_ms, duration_ms)
                 else:
-                    word_audio = master_audio[start_ms : start_ms + duration_ms]
+                    # Slice local file on-the-fly to keep RAM usage under 15MB
+                    wav_bytes = extract_audio_slice(audio_source, start_ms, duration_ms)
+                    
+                if not wav_bytes:
+                    print(f"    [!] Failed to extract '{w}'")
+                    continue
+                word_audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
+                
+                # Save to local cache dir
+                if cached_path:
+                    try:
+                        word_audio.export(cached_path, format="wav")
+                        print(f"    [+] Cached '{w}' -> {cached_path}")
+                    except Exception:
+                        pass
             
             # Trim leading/trailing silence from the slice for crisp playback
             nonsilent_ranges = detect_nonsilent(word_audio, min_silence_len=50, silence_thresh=-35)
@@ -277,7 +277,7 @@ if __name__ == "__main__":
     parser.add_argument("--srt", default="database_speech.srt", help="Path to the local SRT subtitles file")
     parser.add_argument("--audio", default="database_speech.mp4", help="Path to the local video/audio database file")
     parser.add_argument("--youtube", help="YouTube Video ID or URL to stream from on-the-fly")
-    parser.add_argument("--cache-dir", default=".yt_cache", help="Directory to cache fetched audio slices (YouTube mode only)")
+    parser.add_argument("--cache-dir", default=".yt_cache", help="Directory to cache fetched audio slices")
     parser.add_argument("--download", help="Bootstrap and download both SRT and MP4 master files locally from a YouTube ID/URL for offline use")
     
     args = parser.parse_args()
