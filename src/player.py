@@ -39,8 +39,11 @@ def get_youtube_audio_url(video_id_or_url):
     try:
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
         return result.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except FileNotFoundError:
         print("[!] Execution error: ensure 'yt-dlp' is properly installed and added to PATH.")
+        return None
+    except subprocess.CalledProcessError as e:
+        print(f"[!] yt-dlp error: Failed to retrieve video stream. {e.stderr.strip()}")
         return None
 
 def extract_remote_slice(stream_url, start_ms, duration_ms):
