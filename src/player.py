@@ -12,10 +12,10 @@ def parse_srt(srt_path_or_content):
     word_map = {}
     content = ""
     
-    if os.path.exists(srt_path_or_content):
+    if srt_path_or_content and os.path.exists(srt_path_or_content):
         with open(srt_path_or_content, "r", encoding="utf-8") as f:
             content = f.read()
-    else:
+    elif srt_path_or_content:
         content = srt_path_or_content
         
     if not content:
@@ -274,7 +274,7 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="YTVoice Playhead Synthesizer")
     parser.add_argument("sentence", nargs="?", help="The sentence you want to synthesize")
-    parser.add_argument("--srt", help="Path to the local SRT subtitles file")
+    parser.add_argument("--srt", default="database_speech.srt", help="Path to the local SRT subtitles file")
     parser.add_argument("--audio", default="database_speech.mp4", help="Path to the local video/audio database file")
     parser.add_argument("--youtube", help="YouTube Video ID or URL to stream from on-the-fly")
     parser.add_argument("--cache-dir", default=".yt_cache", help="Directory to cache fetched audio slices (YouTube mode only)")
@@ -297,13 +297,12 @@ if __name__ == "__main__":
     
     if is_youtube:
         audio_source = args.youtube
-        # Fetch subtitles from YouTube if local SRT path was not provided
-        if not srt_source:
-            print(f"[*] No local SRT provided. Fetching subtitles from video...")
-            srt_source = fetch_youtube_subtitles(args.youtube)
-            if not srt_source:
-                print("[*] No custom subtitles found on YouTube video. Falling back to local default search.")
-                srt_source = "database_speech.srt"
+        # Fetch subtitles from YouTube if local default SRT is missing
+        if srt_source == "database_speech.srt" and not os.path.exists(srt_source):
+            print(f"[*] No local SRT found. Fetching subtitles from video...")
+            remote_srt = fetch_youtube_subtitles(args.youtube)
+            if remote_srt:
+                srt_source = remote_srt
     else:
         if not os.path.exists(audio_source):
             sd_fallback = "/storage/75D7-DC5F/database_speech.mp4"
