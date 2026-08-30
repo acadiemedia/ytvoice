@@ -6,7 +6,6 @@ A lightweight proof-of-concept concatenative text-to-speech playhead engine. It 
 
 1. **Compilation (`make_database_video.py`)**: 
    Stitches all vocabulary words sequentially into a single continuous audio stream, separated by 250ms guard bands to absorb playback API latency. The output is rendered into an H.264 MP4 video (`database_speech.mp4`), a SubRip subtitle track (`database_speech.srt`), and a text map (`database_map.txt`).
-   * **Story Easter Egg**: The first 100+ words are stitched in order to tell a coherent story, followed by the remaining vocabulary.
 
 2. **Captions & Indexing**: 
    Uploading the `.srt` caption track to YouTube forces YouTube to display the subtitles in sync and index the audio track, making it searchable.
@@ -34,7 +33,7 @@ This generates the `.mp4`, `.srt`, and `.txt` files directly onto the SD Card.
 ### 2. Test Playback Proof of Concept
 To stitch a sentence dynamically from the compiled video file using the SRT timings:
 ```bash
-python3 test_playhead_synth.py "once upon a time steve awakened chloe"
+python3 test_playhead_synth.py "hello steve online active"
 ```
 
 ## Global Command Integration
