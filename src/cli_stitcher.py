@@ -6,6 +6,8 @@ import argparse
 import soundfile as sf
 import numpy as np
 from pydub import AudioSegment
+
+# Import our local portable SpriteExtractor from compiler.py
 from compiler import SpriteExtractor
 
 def stitch_clip(sentence, bin_path, index_path, output_mp4):
@@ -89,15 +91,18 @@ if __name__ == "__main__":
     parser.add_argument("sentence", help="Text to speak")
     parser.add_argument("--bin", default="voice_sprites.bin", help="Path to the binary database")
     parser.add_argument("--index", default="voice_sprites.bin.index.json", help="Path to the index JSON")
-    parser.add_argument("--out", default="/storage/75D7-DC5F/speech_clip.mp4", help="Output MP4 file path")
+    parser.add_argument("--out", default="speech_clip.mp4", help="Output MP4 file path")
     
     args = parser.parse_args()
+    
     bin_path = args.bin
     index_path = args.index
     
-    if not os.path.exists(bin_path) and os.path.exists("/root/token_synth_demo/voice_sprites.bin"):
-        bin_path = "/root/token_synth_demo/voice_sprites.bin"
-    if not os.path.exists(index_path) and os.path.exists("/root/token_synth_demo/voice_sprites.bin.index.json"):
-        index_path = "/root/token_synth_demo/voice_sprites.bin.index.json"
+    if not os.path.exists(bin_path):
+        print(f"[Error] Binary sprite database not found at: {bin_path}")
+        sys.exit(1)
+    if not os.path.exists(index_path):
+        print(f"[Error] Index JSON file not found at: {index_path}")
+        sys.exit(1)
         
     stitch_clip(args.sentence, bin_path, index_path, args.out)
