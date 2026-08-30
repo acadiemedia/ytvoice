@@ -5,6 +5,7 @@ import argparse
 import subprocess
 import io
 import string
+import glob
 from pydub import AudioSegment
 
 def parse_srt(srt_path_or_content):
@@ -74,7 +75,6 @@ def fetch_youtube_subtitles(video_id_or_url):
     ]
     try:
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
-        import glob
         srt_files = glob.glob(f"{temp_prefix}.*.srt")
         if srt_files:
             srt_file = srt_files[0]
@@ -85,6 +85,48 @@ def fetch_youtube_subtitles(video_id_or_url):
     except Exception:
         pass
     return None
+
+def download_database_assets(video_id_or_url):
+    print(f"[*] Bootstrapping offline database assets from video: {video_id_or_url}...")
+    url = video_id_or_url
+    if not url.startswith("http"):
+        url = f"https://youtube.com/watch?v={video_id_or_url}"
+        
+    # 1. Download subtitles
+    print("[*] Downloading subtitles...")
+    srt_content = fetch_youtube_subtitles(video_id_or_url)
+    if srt_content:
+        with open("database_speech.srt", "w", encoding="utf-8") as f:
+            f.write(srt_content)
+        print("[+] Subtitles saved locally to: database_speech.srt")
+    else:
+        print("[!] Warning: Could not retrieve subtitles from YouTube.")
+        
+    # 2. Download full audio file
+    print("[*] Downloading master audio database (this may take a moment)...")
+    cmd = [
+        sys.executable, "-m", "yt_dlp",
+        "-f", "bestaudio",
+        "-o", "database_speech.%(ext)s",
+        url
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+        # Find the downloaded file
+        downloaded_files = glob.glob("database_speech.*")
+        audio_files = [f for f in downloaded_files if not f.endswith(".srt")]
+        if audio_files:
+            src_file = audio_files[0]
+            if src_file != "database_speech.mp4":
+                if os.path.exists("database_speech.mp4"):
+                    os.remove("database_speech.mp4")
+                os.rename(src_file, "database_speech.mp4")
+            print("[+] Master audio database saved locally to: database_speech.mp4")
+            print("[+] Bootstrap complete! You can now run completely offline.")
+        else:
+            print("[!] Error: No audio file was downloaded.")
+    except Exception as e:
+        print(f"[!] Error downloading master audio: {e}")
 
 def get_youtube_audio_url(video_id_or_url):
     print(f"[*] Resolving YouTube direct stream URL for ID: {video_id_or_url}...")
@@ -231,14 +273,24 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="YTVoice Playhead Synthesizer")
-    parser.add_argument("sentence", help="The sentence you want to synthesize")
+    parser.add_argument("sentence", nargs="?", help="The sentence you want to synthesize")
     parser.add_argument("--srt", help="Path to the local SRT subtitles file")
     parser.add_argument("--audio", default="database_speech.mp4", help="Path to the local video/audio database file")
     parser.add_argument("--youtube", help="YouTube Video ID or URL to stream from on-the-fly")
     parser.add_argument("--cache-dir", default=".yt_cache", help="Directory to cache fetched audio slices (YouTube mode only)")
+    parser.add_argument("--download", help="Bootstrap and download both SRT and MP4 master files locally from a YouTube ID/URL for offline use")
     
     args = parser.parse_args()
     
+    # Handle bootstrap action
+    if args.download:
+        download_database_assets(args.download)
+        sys.exit(0)
+        
+    if not args.sentence:
+        parser.print_help()
+        sys.exit(1)
+        
     srt_source = args.srt
     audio_source = args.audio
     is_youtube = bool(args.youtube)
