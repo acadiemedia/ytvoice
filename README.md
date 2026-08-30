@@ -50,6 +50,8 @@ cd ytvoice
 pip install -r requirements.txt
 ```
 
+*(Note: For Python 3.13+, pip will automatically install the `audioop-lts` backport package since the standard `audioop` module was removed in Python 3.13).*
+
 ---
 
 ## 🚀 How to Run
