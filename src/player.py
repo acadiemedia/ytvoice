@@ -4,14 +4,16 @@ import re
 import argparse
 import subprocess
 import io
+import string
 from pydub import AudioSegment
 
 def parse_srt(srt_path):
     word_map = {}
+    if not os.path.exists(srt_path):
+        return word_map
     with open(srt_path, "r", encoding="utf-8") as f:
         content = f.read()
     
-    # Matches: index \n start --> end \n word
     pattern = re.compile(r"(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.+)")
     matches = pattern.findall(content)
     
@@ -32,10 +34,14 @@ def get_youtube_audio_url(video_id_or_url):
     print(f"[*] Resolving YouTube direct stream URL for ID: {video_id_or_url}...")
     url = video_id_or_url
     if not url.startswith("http"):
-        url = f"https://www.youtube.com/watch?v={video_id_or_url}"
+        url = f"https://youtube.com/watch?v={video_id_or_url}"
     cmd = ["yt-dlp", "-g", "-f", "bestaudio", url]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    return result.stdout.strip()
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("[!] Execution error: ensure 'yt-dlp' is properly installed and added to PATH.")
+        return None
 
 def extract_remote_slice(stream_url, start_ms, duration_ms):
     start_sec = start_ms / 1000.0
@@ -48,25 +54,25 @@ def extract_remote_slice(stream_url, start_ms, duration_ms):
         "-f", "wav",
         "-"
     ]
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    wav_bytes, _ = p.communicate()
-    return wav_bytes
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        wav_bytes, _ = p.communicate()
+        return wav_bytes
+    except FileNotFoundError:
+        return b""
 
 def play_audio(file_path):
-    # 1. Android Termux PRoot environment check
     if os.path.exists("/system/bin/linker64"):
         termux_mpv = "/data/data/com.termux/files/usr/bin/mpv"
         if os.path.exists(termux_mpv):
             os.system(f"/system/bin/linker64 {termux_mpv} --no-video {file_path} > /dev/null 2>&1")
             return
             
-    # 2. Cross-platform command fallbacks (Mac/Linux/Windows)
     if os.system(f"mpv --no-video {file_path} > /dev/null 2>&1") == 0:
         return
     if os.system(f"ffplay -nodisp -autoexit {file_path} > /dev/null 2>&1") == 0:
         return
         
-    # 3. Pure Python fallback
     try:
         from pydub.playback import play
         segment = AudioSegment.from_file(file_path)
@@ -90,7 +96,9 @@ def synthesize_sentence(sentence, srt_path, audio_source, is_youtube=False):
         print(f"[*] Loading master database audio from local file: {audio_source}")
         master_audio = AudioSegment.from_file(audio_source)
     
-    words = sentence.lower().replace(",", "").replace(".", "").split()
+    # Secure punctuation cleansing pattern
+    clean_sentence = sentence.translate(str.maketrans('', '', string.punctuation))
+    words = clean_sentence.lower().split()
     output_audio = AudioSegment.empty()
     
     print(f"[*] Stitching sentence: '{sentence}'")
@@ -100,7 +108,6 @@ def synthesize_sentence(sentence, srt_path, audio_source, is_youtube=False):
             start_ms, duration_ms = word_map[w]
             print(f"  - Found '{w}': seek to {start_ms}ms, duration {duration_ms}ms")
             
-            # Fetch slice either from remote YouTube stream or local file
             if is_youtube:
                 wav_bytes = extract_remote_slice(stream_url, start_ms, duration_ms)
                 if not wav_bytes:
@@ -110,13 +117,11 @@ def synthesize_sentence(sentence, srt_path, audio_source, is_youtube=False):
             else:
                 word_audio = master_audio[start_ms : start_ms + duration_ms]
             
-            # Trim leading/trailing silence from the slice for crisp playback
             nonsilent_ranges = detect_nonsilent(word_audio, min_silence_len=50, silence_thresh=-35)
             if nonsilent_ranges:
                 word_audio = word_audio[nonsilent_ranges[0][0] : nonsilent_ranges[-1][1]]
                 
             output_audio += word_audio
-            # Add a natural 35ms spacing
             output_audio += AudioSegment.silent(duration=35)
         else:
             print(f"  - Word '{w}' not found in database! Playing short beep.")
@@ -128,8 +133,6 @@ def synthesize_sentence(sentence, srt_path, audio_source, is_youtube=False):
     temp_out = os.path.join(os.environ.get("TMPDIR", "/tmp"), "playhead_proof.wav")
     output_audio.export(temp_out, format="wav")
     print(f"[+] Stitched audio exported to {temp_out}")
-    
-    # Play the output
     play_audio(temp_out)
 
 if __name__ == "__main__":
@@ -140,16 +143,13 @@ if __name__ == "__main__":
     parser.add_argument("--youtube", help="YouTube Video ID or URL to stream from on-the-fly")
     
     args = parser.parse_args()
-    
     srt_path = args.srt
     audio_source = args.audio
-    is_youtube = False
+    is_youtube = bool(args.youtube)
     
-    if args.youtube:
+    if is_youtube:
         audio_source = args.youtube
-        is_youtube = True
     else:
-        # Fallback to Termux SD card default path if not found in current directory
         if not os.path.exists(audio_source):
             sd_fallback = "/storage/75D7-DC5F/database_speech.mp4"
             if os.path.exists(sd_fallback):
@@ -161,9 +161,7 @@ if __name__ == "__main__":
             srt_path = sd_fallback
 
     if not is_youtube and not os.path.exists(audio_source):
-        print(f"[Error] Could not locate local MP4 file.")
-        print(f"  Expected: {audio_source}")
-        print("\nPlease specify a --youtube Video ID or place database_speech.mp4 locally.")
+        print(f"[Error] Could not locate local MP4 file: {audio_source}")
         sys.exit(1)
         
     if not os.path.exists(srt_path):

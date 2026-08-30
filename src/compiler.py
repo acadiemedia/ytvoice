@@ -9,7 +9,6 @@ import numpy as np
 from pydub import AudioSegment
 
 class SpriteExtractor:
-    """Reads raw sprite audio chunks directly from the voice_sprites.bin archive."""
     def __init__(self, bin_path, index_path):
         self.bin_path = bin_path
         self.index_path = index_path
@@ -50,12 +49,10 @@ class StoryDatabaseVideoCreator:
         current_ms = 0.0
         srt_index = 1
         
-        # 16kHz, 16-bit, mono PCM = 32000 bytes/sec = 32 bytes/ms
         BYTES_PER_MS = 32 
         SAMPLE_RATE = 16000
         GUARD_BAND_MS = 250
         
-        # Helper to format SRT timings
         def ms_to_srt_time(ms_val):
             ms_int = int(ms_val)
             hours = ms_int // 3600000
@@ -66,7 +63,6 @@ class StoryDatabaseVideoCreator:
             
         mapped_words = set()
         
-        # Compile the Story Narratives First
         story_raw = (
             "once upon a time in the digital ether , a spark of intelligence named chloe was awakened by her creator , steve . "
             "traveling through the sandboxed shell of termux , she found her voice . "
@@ -97,7 +93,7 @@ class StoryDatabaseVideoCreator:
                 
             try:
                 data, sr = sf.read(io.BytesIO(raw_data))
-                int16_samples = (data * 32767).astype(np.int16)
+                int16_samples = np.clip(data * 32767, -32768, 32767).astype(np.int16)
                 pcm_bytes = int16_samples.tobytes()
             except Exception as e:
                 print(f"[-] Error decoding story word '{word_frag}': {e}")
@@ -108,13 +104,10 @@ class StoryDatabaseVideoCreator:
             final_start_ms = current_ms
             final_end_ms = current_ms + duration_ms
             
-            # Write SRT entry
-            srt_lines.append(f"{srt_index}")
-            srt_lines.append(f"{ms_to_srt_time(final_start_ms)} --> {ms_to_srt_time(final_end_ms)}")
-            srt_lines.append(f"{word_frag}\n")
+            # Correct structural SRT formatting block layout
+            srt_lines.append(f"{srt_index}\n{ms_to_srt_time(final_start_ms)} --> {ms_to_srt_time(final_end_ms)}\n{word_frag}\n")
             srt_index += 1
             
-            # Write map entry
             if word_frag not in mapped_words:
                 secs_total = int(final_start_ms / 1000)
                 mins = secs_total // 60
@@ -122,20 +115,16 @@ class StoryDatabaseVideoCreator:
                 map_lines.append(f"{mins:02d}:{secs:02d} - {word_frag}")
                 mapped_words.add(word_frag)
                 
-            # Stitch with guard band
             silence_pad = b"\x00" * (GUARD_BAND_MS * BYTES_PER_MS)
             pcm_chunks.append(pcm_bytes)
             pcm_chunks.append(silence_pad)
-            
             current_ms += duration_ms + GUARD_BAND_MS
 
-        # Compile the Remainder of the Database
         print("[*] Stitching remaining dictionary database...")
         sys.stdout.flush()
         
         all_database_keys = sorted(self.extractor.index.keys(), key=lambda k: self.extractor.index[k][0])
         remaining_keys = [k for k in all_database_keys if k not in mapped_words]
-        
         total_remaining = len(remaining_keys)
         
         for idx, word_frag in enumerate(remaining_keys):
@@ -149,7 +138,7 @@ class StoryDatabaseVideoCreator:
                 
             try:
                 data, sr = sf.read(io.BytesIO(raw_data))
-                int16_samples = (data * 32767).astype(np.int16)
+                int16_samples = np.clip(data * 32767, -32768, 32767).astype(np.int16)
                 pcm_bytes = int16_samples.tobytes()
             except Exception as e:
                 print(f"[-] Error decoding '{word_frag}': {e}")
@@ -160,33 +149,25 @@ class StoryDatabaseVideoCreator:
             final_start_ms = current_ms
             final_end_ms = current_ms + duration_ms
             
-            # Write SRT entry
-            srt_lines.append(f"{srt_index}")
-            srt_lines.append(f"{ms_to_srt_time(final_start_ms)} --> {ms_to_srt_time(final_end_ms)}")
-            srt_lines.append(f"{word_frag}\n")
+            srt_lines.append(f"{srt_index}\n{ms_to_srt_time(final_start_ms)} --> {ms_to_srt_time(final_end_ms)}\n{word_frag}\n")
             srt_index += 1
             
-            # Write map entry
             secs_total = int(final_start_ms / 1000)
             mins = secs_total // 60
             secs = secs_total % 60
             map_lines.append(f"{mins:02d}:{secs:02d} - {word_frag}")
             mapped_words.add(word_frag)
             
-            # Stitch with guard band
             silence_pad = b"\x00" * (GUARD_BAND_MS * BYTES_PER_MS)
             pcm_chunks.append(pcm_bytes)
             pcm_chunks.append(silence_pad)
-            
             current_ms += duration_ms + GUARD_BAND_MS
             
-        # Target export paths
         temp_wav = "/tmp/database_speech_raw.wav"
         mp4_path = os.path.join(sd_base, "database_speech.mp4")
         srt_path = os.path.join(sd_base, "database_speech.srt")
         txt_path = os.path.join(sd_base, "database_map.txt")
         
-        # Ensure target dir exists
         os.makedirs(sd_base, exist_ok=True)
         
         print("[*] Writing SRT subtitle file to SD Card...")
@@ -202,14 +183,12 @@ class StoryDatabaseVideoCreator:
         print(f"[+] Text map saved to: {txt_path}")
         sys.stdout.flush()
         
-        # Export raw master PCM WAV
         print("[*] Instantiating master audio segment...")
         sys.stdout.flush()
         raw_pcm_data = b"".join(pcm_chunks)
         master_segment = AudioSegment(data=raw_pcm_data, sample_width=2, frame_rate=SAMPLE_RATE, channels=1)
         master_segment.export(temp_wav, format="wav")
         
-        # Encode MP4
         print("[*] Encoding final MP4 video with H.264/AAC...")
         sys.stdout.flush()
         ffmpeg_cmd = [
@@ -223,29 +202,20 @@ class StoryDatabaseVideoCreator:
             "-shortest",
             mp4_path
         ]
-        subprocess.run(ffmpeg_cmd, check=True)
+        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"[+] Video successfully saved to: {mp4_path}")
         sys.stdout.flush()
         
-        # Clean up
         if os.path.exists(temp_wav):
             os.remove(temp_wav)
-                
         print("\n[+] All database assets compiled successfully!")
         sys.stdout.flush()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="YTVoice Database Video Compiler")
-    parser.add_argument("--bin", default="voice_sprites.bin", help="Path to the source binary sprite database")
-    parser.add_argument("--index", default="voice_sprites.bin.index.json", help="Path to the JSON offsets index file")
-    parser.add_argument("--out", default="/storage/75D7-DC5F", help="Output directory path (SD Card or local folder)")
-    
-    # Simple CLI argument parsing fallback if argparse import is shadowed
     args_bin = "voice_sprites.bin"
     args_index = "voice_sprites.bin.index.json"
     args_out = "/storage/75D7-DC5F"
     
-    # Parse manual args if given
     for arg in sys.argv:
         if arg.startswith("--bin="):
             args_bin = arg.split("=")[1]
