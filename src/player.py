@@ -210,17 +210,14 @@ def play_audio(file_path):
         print(f"[!] Could not play audio automatically. Output file saved at: {file_path}")
 
 def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, cache_dir=None, bin_source=None, index_source=None):
-    # If in binary mode, we load the dictionary index directly from the JSON
     word_map = {}
     extractor = None
     
     if bin_source and index_source:
         try:
-            import soundfile as sf
-            import numpy as np
             print(f"[*] Booting local binary database mode (direct byte seeks): {bin_source}")
             extractor = SpriteExtractor(bin_source, index_source)
-            word_map = {k: (0, 0) for k in extractor.index.keys()} # Keys map is just the vocab list
+            word_map = {k: (0, 0) for k in extractor.index.keys()}
         except ImportError:
             print("[Error] To use the local binary database (voice_sprites.bin), you must install soundfile and numpy.")
             print("Run: pip install -r requirements-compiler.txt")
@@ -266,7 +263,6 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
                 word_audio = AudioSegment.from_file(cached_path, format="wav")
             else:
                 if extractor:
-                    # Direct Disk Byte Seek Mode (Extremely Fast, 0ms latency)
                     raw_data = extractor.extract_sprite(w)
                     if not raw_data:
                         print(f"    [!] Failed to extract '{w}' from binary database")
@@ -333,7 +329,7 @@ if __name__ == "__main__":
     parser.add_argument("sentence", nargs="?", help="The sentence you want to synthesize")
     parser.add_argument("--srt", default="database_speech.srt", help="Path to the local SRT subtitles file")
     parser.add_argument("--audio", default="database_speech.mp4", help="Path to the local video/audio database file")
-    parser.add_argument("--youtube", help="YouTube Video ID or URL to stream from on-the-fly")
+    parser.add_argument("--youtube", nargs="?", const="r-WQt6Hi86Y", help="YouTube Video ID or URL to stream from on-the-fly")
     parser.add_argument("--cache-dir", default=".yt_cache", help="Directory to cache fetched audio slices")
     parser.add_argument("--bin", help="Path to the binary database file (e.g. voice_sprites.bin)")
     parser.add_argument("--index", help="Path to the JSON index file (e.g. voice_sprites.bin.index.json)")
@@ -368,12 +364,20 @@ if __name__ == "__main__":
             bin_source = default_bin
             index_source = default_index
             
+    # Auto-detect local MP4 mode
+    if not is_youtube and not is_binary_mode and not os.path.exists(audio_source):
+        # Zero-Config fallback: if no local database assets are found, default to YouTube cloud mode
+        print("[*] No local database assets found. Defaulting to YouTube cloud streaming mode...")
+        is_youtube = True
+        args.youtube = "r-WQt6Hi86Y"
+            
     if is_youtube:
-        audio_source = args.youtube
+        youtube_id = args.youtube if args.youtube else "r-WQt6Hi86Y"
+        audio_source = youtube_id
         # Fetch subtitles from YouTube if local default SRT is missing
         if srt_source == "database_speech.srt" and not os.path.exists(srt_source):
             print(f"[*] No local SRT found. Fetching subtitles from video...")
-            remote_srt = fetch_youtube_subtitles(args.youtube)
+            remote_srt = fetch_youtube_subtitles(youtube_id)
             if remote_srt:
                 srt_source = remote_srt
     else:
