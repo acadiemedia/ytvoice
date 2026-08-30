@@ -8,6 +8,30 @@ import string
 import glob
 from pydub import AudioSegment
 
+class SpriteExtractor:
+    def __init__(self, bin_path, index_path):
+        self.bin_path = bin_path
+        self.index_path = index_path
+        self.index = {}
+        self.load_index()
+
+    def load_index(self):
+        import json
+        if os.path.exists(self.index_path):
+            with open(self.index_path, 'r', encoding='utf-8') as f:
+                self.index = json.load(f)
+
+    def extract_sprite(self, word_key):
+        if word_key not in self.index:
+            return None
+        offset, length = self.index[word_key]
+        try:
+            with open(self.bin_path, 'rb') as f:
+                f.seek(offset)
+                return f.read(length)
+        except Exception:
+            return None
+
 def parse_srt(srt_path_or_content):
     word_map = {}
     content = ""
@@ -185,8 +209,25 @@ def play_audio(file_path):
     except Exception:
         print(f"[!] Could not play audio automatically. Output file saved at: {file_path}")
 
-def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, cache_dir=None):
-    word_map = parse_srt(srt_source)
+def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, cache_dir=None, bin_source=None, index_source=None):
+    # If in binary mode, we load the dictionary index directly from the JSON
+    word_map = {}
+    extractor = None
+    
+    if bin_source and index_source:
+        try:
+            import soundfile as sf
+            import numpy as np
+            print(f"[*] Booting local binary database mode (direct byte seeks): {bin_source}")
+            extractor = SpriteExtractor(bin_source, index_source)
+            word_map = {k: (0, 0) for k in extractor.index.keys()} # Keys map is just the vocab list
+        except ImportError:
+            print("[Error] To use the local binary database (voice_sprites.bin), you must install soundfile and numpy.")
+            print("Run: pip install -r requirements-compiler.txt")
+            sys.exit(1)
+    else:
+        word_map = parse_srt(srt_source)
+        
     if not word_map:
         print("[Error] Subtitle map is empty or could not be parsed.")
         sys.exit(1)
@@ -215,8 +256,6 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
     from pydub.silence import detect_nonsilent
     for w, is_found in processed_words:
         if is_found:
-            start_ms, duration_ms = word_map[w]
-            
             # Check cache
             cached_path = None
             if cache_dir:
@@ -226,23 +265,41 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
                 print(f"  - [Cache Hit] '{w}' loaded locally.")
                 word_audio = AudioSegment.from_file(cached_path, format="wav")
             else:
-                print(f"  - Found '{w}': seek to {start_ms}ms, duration {duration_ms}ms")
-                if is_youtube:
-                    # Lazy resolve URL on-demand
-                    if not stream_url:
-                        stream_url = get_youtube_audio_url(audio_source)
-                        if not stream_url:
-                            print("[Error] Failed to resolve YouTube audio stream URL.")
-                            sys.exit(1)
-                    wav_bytes = extract_audio_slice(stream_url, start_ms, duration_ms)
+                if extractor:
+                    # Direct Disk Byte Seek Mode (Extremely Fast, 0ms latency)
+                    raw_data = extractor.extract_sprite(w)
+                    if not raw_data:
+                        print(f"    [!] Failed to extract '{w}' from binary database")
+                        continue
+                    try:
+                        import soundfile as sf
+                        import numpy as np
+                        data, sr = sf.read(io.BytesIO(raw_data))
+                        int16_samples = np.clip(data * 32767, -32768, 32767).astype(np.int16)
+                        pcm_bytes = int16_samples.tobytes()
+                        word_audio = AudioSegment(data=pcm_bytes, sample_width=2, frame_rate=sr, channels=1)
+                    except Exception as e:
+                        print(f"    [-] Error decoding '{w}' from binary database: {e}")
+                        continue
                 else:
-                    # Slice local file on-the-fly to keep RAM usage under 15MB
-                    wav_bytes = extract_audio_slice(audio_source, start_ms, duration_ms)
-                    
-                if not wav_bytes:
-                    print(f"    [!] Failed to extract '{w}'")
-                    continue
-                word_audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
+                    start_ms, duration_ms = word_map[w]
+                    print(f"  - Found '{w}': seek to {start_ms}ms, duration {duration_ms}ms")
+                    if is_youtube:
+                        # Lazy resolve URL on-demand
+                        if not stream_url:
+                            stream_url = get_youtube_audio_url(audio_source)
+                            if not stream_url:
+                                print("[Error] Failed to resolve YouTube audio stream URL.")
+                                sys.exit(1)
+                        wav_bytes = extract_audio_slice(stream_url, start_ms, duration_ms)
+                    else:
+                        # Slice local media file on-the-fly
+                        wav_bytes = extract_audio_slice(audio_source, start_ms, duration_ms)
+                        
+                    if not wav_bytes:
+                        print(f"    [!] Failed to extract '{w}'")
+                        continue
+                    word_audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
                 
                 # Save to local cache dir
                 if cached_path:
@@ -278,6 +335,8 @@ if __name__ == "__main__":
     parser.add_argument("--audio", default="database_speech.mp4", help="Path to the local video/audio database file")
     parser.add_argument("--youtube", help="YouTube Video ID or URL to stream from on-the-fly")
     parser.add_argument("--cache-dir", default=".yt_cache", help="Directory to cache fetched audio slices")
+    parser.add_argument("--bin", help="Path to the binary database file (e.g. voice_sprites.bin)")
+    parser.add_argument("--index", help="Path to the JSON index file (e.g. voice_sprites.bin.index.json)")
     parser.add_argument("--download", help="Bootstrap and download both SRT and MP4 master files locally from a YouTube ID/URL for offline use")
     
     args = parser.parse_args()
@@ -295,6 +354,20 @@ if __name__ == "__main__":
     audio_source = args.audio
     is_youtube = bool(args.youtube)
     
+    # Decide binary mode
+    is_binary_mode = False
+    bin_source = args.bin
+    index_source = args.index
+    
+    # Auto-detect binary mode in current directory if no specific sources are passed
+    if not is_youtube and not args.bin and not args.audio:
+        default_bin = "voice_sprites.bin"
+        default_index = "voice_sprites.bin.index.json"
+        if os.path.exists(default_bin) and os.path.exists(default_index):
+            is_binary_mode = True
+            bin_source = default_bin
+            index_source = default_index
+            
     if is_youtube:
         audio_source = args.youtube
         # Fetch subtitles from YouTube if local default SRT is missing
@@ -304,13 +377,13 @@ if __name__ == "__main__":
             if remote_srt:
                 srt_source = remote_srt
     else:
-        if not os.path.exists(audio_source):
+        if not is_binary_mode and not os.path.exists(audio_source):
             sd_fallback = "/storage/75D7-DC5F/database_speech.mp4"
             if os.path.exists(sd_fallback):
                 audio_source = sd_fallback
                 
-    # Local SRT fallback checks
-    if isinstance(srt_source, str) and not os.path.exists(srt_source):
+    # Local SRT fallback checks (only if not in binary mode)
+    if not is_binary_mode and isinstance(srt_source, str) and not os.path.exists(srt_source):
         sd_fallback = "/storage/75D7-DC5F/database_speech.srt"
         if os.path.exists(sd_fallback):
             srt_source = sd_fallback
@@ -319,12 +392,16 @@ if __name__ == "__main__":
             if os.path.exists(local_fallback):
                 srt_source = local_fallback
 
-    if not is_youtube and not os.path.exists(audio_source):
+    if not is_youtube and not is_binary_mode and not os.path.exists(audio_source):
         print(f"[Error] Could not locate local MP4 file: {audio_source}")
         sys.exit(1)
         
-    if isinstance(srt_source, str) and not os.path.exists(srt_source):
+    if not is_binary_mode and isinstance(srt_source, str) and not os.path.exists(srt_source):
         print(f"[Error] Could not locate local or remote SRT source.")
         sys.exit(1)
         
-    synthesize_sentence(args.sentence, srt_source, audio_source, is_youtube=is_youtube, cache_dir=args.cache_dir)
+    synthesize_sentence(args.sentence, srt_source, audio_source, 
+                        is_youtube=is_youtube, 
+                        cache_dir=args.cache_dir,
+                        bin_source=bin_source,
+                        index_source=index_source)
