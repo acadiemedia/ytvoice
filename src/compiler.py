@@ -38,7 +38,7 @@ class StoryDatabaseVideoCreator:
     def __init__(self, bin_path, index_path):
         self.extractor = SpriteExtractor(bin_path, index_path)
 
-    def build_database_assets(self, sd_base="/storage/75D7-DC5F"):
+    def build_database_assets(self, sd_base="output"):
         print(f"[*] Starting Story-encoded Database compilation of all {len(self.extractor.index)} words...")
         sys.stdout.flush()
         
@@ -214,7 +214,7 @@ class StoryDatabaseVideoCreator:
 if __name__ == "__main__":
     args_bin = "voice_sprites.bin"
     args_index = "voice_sprites.bin.index.json"
-    args_out = "/storage/75D7-DC5F"
+    args_out = "output"
     
     for arg in sys.argv:
         if arg.startswith("--bin="):

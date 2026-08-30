@@ -218,21 +218,11 @@ if __name__ == "__main__":
             if not srt_source:
                 print("[*] No custom subtitles found on YouTube video. Falling back to local default search.")
                 srt_source = "database_speech.srt"
-    else:
-        if not os.path.exists(audio_source):
-            sd_fallback = "/storage/75D7-DC5F/database_speech.mp4"
-            if os.path.exists(sd_fallback):
-                audio_source = sd_fallback
-                
     # Local SRT fallback checks
     if isinstance(srt_source, str) and not os.path.exists(srt_source):
-        sd_fallback = "/storage/75D7-DC5F/database_speech.srt"
-        if os.path.exists(sd_fallback):
-            srt_source = sd_fallback
-        else:
-            local_fallback = "database_speech.srt"
-            if os.path.exists(local_fallback):
-                srt_source = local_fallback
+        local_fallback = "database_speech.srt"
+        if os.path.exists(local_fallback):
+            srt_source = local_fallback
 
     if not is_youtube and not os.path.exists(audio_source):
         print(f"[Error] Could not locate local MP4 file: {audio_source}")
