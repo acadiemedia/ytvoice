@@ -1,0 +1,9 @@
+# Ignore voice assets and temporary chunks
+*.bin
+*.bin.index.json
+sprites/
+glitch/
+*.wav
+*.mp3
+*.mp4
+/tmp/
