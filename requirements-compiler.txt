@@ -1,0 +1,3 @@
+# YTVoice Compiler Dependencies (Optional - only needed to rebuild the database)
+numpy>=1.21.0
+soundfile>=0.10.0

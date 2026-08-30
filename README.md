@@ -45,6 +45,8 @@ Clone the repository and install the Python packages:
 ```bash
 git clone https://github.com/acadiemedia/ytvoice.git
 cd ytvoice
+
+# Install playback dependencies (Zero compilation, safe for Termux)
 pip install -r requirements.txt
 ```
 
@@ -68,9 +70,13 @@ python3 src/player.py "hello steve online active"
 ```
 
 ### 3. Compile Your Own Database (Optional)
-To stitch a directory of raw voice sprites (ADPCM or WAV format) into a unified H.264 video with 250ms guard bands:
+To stitch a directory of raw voice sprites (ADPCM or WAV format) into a unified H.264 video with 250ms guard bands. Note: This requires compiling `numpy` on your platform.
 
 ```bash
+# Install compiler dependencies (optional)
+pip install -r requirements-compiler.txt
+
+# Run compiler
 python3 src/compiler.py
 ```
 
