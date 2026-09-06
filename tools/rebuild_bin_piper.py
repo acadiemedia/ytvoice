@@ -41,6 +41,10 @@ def load_old_index(index_path):
 
 
 def keep_key(k):
+    # "i" is a real English word and must be spoken (use the batch `-i`/`-d`
+    # path for it — piper's single-arg stdin mode drops a lone "i"/"I").
+    if k == "i":
+        return True
     return len(k) >= 2 and bool(KEEP_PATTERN.fullmatch(k))
 
 
