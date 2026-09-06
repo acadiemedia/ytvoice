@@ -1,12 +1,22 @@
 import sys
 import os
 import json
+import tempfile
 import subprocess
 import io
 import argparse
+import warnings
 import soundfile as sf
 import numpy as np
-from pydub import AudioSegment
+from ffmpeg_util import get_ffmpeg_exe, configure_pydub
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", RuntimeWarning)
+    from pydub import AudioSegment
+
+configure_pydub()
+
+FFMPEG_EXE = get_ffmpeg_exe()
 
 class SpriteExtractor:
     def __init__(self, bin_path, index_path):
@@ -163,7 +173,7 @@ class StoryDatabaseVideoCreator:
             pcm_chunks.append(silence_pad)
             current_ms += duration_ms + GUARD_BAND_MS
             
-        temp_wav = "/tmp/database_speech_raw.wav"
+        temp_wav = os.path.join(tempfile.gettempdir(), "database_speech_raw.wav")
         mp4_path = os.path.join(sd_base, "database_speech.mp4")
         srt_path = os.path.join(sd_base, "database_speech.srt")
         txt_path = os.path.join(sd_base, "database_map.txt")
@@ -192,7 +202,7 @@ class StoryDatabaseVideoCreator:
         print("[*] Encoding final MP4 video with H.264/AAC...")
         sys.stdout.flush()
         ffmpeg_cmd = [
-            "ffmpeg", "-y",
+            FFMPEG_EXE, "-y",
             "-f", "lavfi", "-r", "1", "-i", "color=c=black:s=640x360",
             "-i", temp_wav,
             "-c:v", "libx264", "-tune", "stillimage",

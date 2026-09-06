@@ -1,6 +1,11 @@
 # YTVoice Core Playback Dependencies
 pydub>=0.25.1
+numpy>=1.21.0
+soundfile>=0.12.1
 yt-dlp>=2023.01.01
+
+# Bundled static ffmpeg binary (used when ffmpeg/ffprobe are not on PATH)
+imageio-ffmpeg>=0.4.9
 
 # Backport for Python 3.13+ (audioop was removed from standard library)
 audioop-lts; python_version >= "3.13"

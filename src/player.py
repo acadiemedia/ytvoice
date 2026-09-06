@@ -1,12 +1,23 @@
 import sys
 import os
 import re
+import tempfile
+import shutil
 import argparse
 import subprocess
 import io
 import string
 import glob
-from pydub import AudioSegment
+import warnings
+from ffmpeg_util import get_ffmpeg_exe, configure_pydub
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", RuntimeWarning)
+    from pydub import AudioSegment
+
+configure_pydub()
+
+FFMPEG_EXE = get_ffmpeg_exe()
 
 class SpriteExtractor:
     def __init__(self, bin_path, index_path):
@@ -89,7 +100,7 @@ def fetch_youtube_subtitles(video_id_or_url):
     if not url.startswith("http"):
         url = f"https://youtube.com/watch?v={video_id_or_url}"
         
-    temp_prefix = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"yt_subs_{video_id_or_url.replace('-', '_')}")
+    temp_prefix = os.path.join(tempfile.gettempdir(), f"yt_subs_{video_id_or_url.replace('-', '_')}")
     cmd = [
         sys.executable, "-m", "yt_dlp",
         "--write-subs", "--sub-langs", "en.*,en",
@@ -176,7 +187,7 @@ def extract_audio_slice(source_path_or_url, start_ms, duration_ms):
     start_sec = start_ms / 1000.0
     dur_sec = duration_ms / 1000.0
     cmd = [
-        "ffmpeg", "-y",
+        FFMPEG_EXE, "-y",
         "-ss", f"{start_sec:.3f}",
         "-t", f"{dur_sec:.3f}",
         "-i", source_path_or_url,
@@ -190,24 +201,47 @@ def extract_audio_slice(source_path_or_url, start_ms, duration_ms):
     except FileNotFoundError:
         return b""
 
+def _try_play(cmd):
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
 def play_audio(file_path):
     if os.path.exists("/system/bin/linker64"):
         termux_mpv = "/data/data/com.termux/files/usr/bin/mpv"
         if os.path.exists(termux_mpv):
             os.system(f"/system/bin/linker64 {termux_mpv} --no-video {file_path} > /dev/null 2>&1")
             return
-            
-    if os.system(f"mpv --no-video {file_path} > /dev/null 2>&1") == 0:
+
+    mpv = shutil.which("mpv")
+    if mpv and _try_play([mpv, "--no-video", file_path]):
         return
-    if os.system(f"ffplay -nodisp -autoexit {file_path} > /dev/null 2>&1") == 0:
+
+    ffplay = shutil.which("ffplay")
+    if ffplay and _try_play([ffplay, "-nodisp", "-autoexit", file_path]):
         return
-        
+
     try:
-        from pydub.playback import play
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            from pydub.playback import play
         segment = AudioSegment.from_file(file_path)
         play(segment)
+        return
     except Exception:
-        print(f"[!] Could not play audio automatically. Output file saved at: {file_path}")
+        pass
+
+    if sys.platform == "win32":
+        try:
+            import winsound
+            winsound.PlaySound(file_path, winsound.SND_FILENAME)
+            return
+        except Exception:
+            pass
+
+    print(f"[!] Could not play audio automatically. Output file saved at: {file_path}")
 
 def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, cache_dir=None, bin_source=None, index_source=None):
     word_map = {}
@@ -319,7 +353,7 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
             output_audio += beep
             output_audio += AudioSegment.silent(duration=100)
             
-    temp_out = os.path.join(os.environ.get("TMPDIR", "/tmp"), "playhead_proof.wav")
+    temp_out = os.path.join(tempfile.gettempdir(), "playhead_proof.wav")
     output_audio.export(temp_out, format="wav")
     print(f"[+] Stitched audio exported to {temp_out}")
     play_audio(temp_out)
@@ -356,7 +390,7 @@ if __name__ == "__main__":
     index_source = args.index
     
     # Auto-detect binary mode in current directory if no specific sources are passed
-    if not is_youtube and not args.bin and not args.audio:
+    if not is_youtube and not args.bin:
         default_bin = "voice_sprites.bin"
         default_index = "voice_sprites.bin.index.json"
         if os.path.exists(default_bin) and os.path.exists(default_index):

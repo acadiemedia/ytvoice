@@ -1,14 +1,24 @@
 import sys
 import os
 import io
+import tempfile
 import subprocess
 import argparse
+import warnings
 import soundfile as sf
 import numpy as np
-from pydub import AudioSegment
+from ffmpeg_util import get_ffmpeg_exe, configure_pydub
 
 # Import our local portable SpriteExtractor from compiler.py
 from compiler import SpriteExtractor
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", RuntimeWarning)
+    from pydub import AudioSegment
+
+configure_pydub()
+
+FFMPEG_EXE = get_ffmpeg_exe()
 
 def stitch_clip(sentence, bin_path, index_path, output_mp4):
     print(f"[*] Loading database index from: {index_path}")
@@ -53,7 +63,7 @@ def stitch_clip(sentence, bin_path, index_path, output_mp4):
         print("[Error] No words were successfully stitched.")
         sys.exit(1)
         
-    temp_wav = "/tmp/clip_temp.wav"
+    temp_wav = os.path.join(tempfile.gettempdir(), "clip_temp.wav")
     raw_pcm_data = b"".join(pcm_chunks)
     master_segment = AudioSegment(data=raw_pcm_data, sample_width=2, frame_rate=SAMPLE_RATE, channels=1)
     master_segment.export(temp_wav, format="wav")
@@ -71,7 +81,7 @@ def stitch_clip(sentence, bin_path, index_path, output_mp4):
     
     print(f"[*] Packaging as MP4 to: {output_mp4}")
     cmd = [
-        "ffmpeg", "-y",
+        FFMPEG_EXE, "-y",
         "-f", "lavfi", "-i", "color=c=black:s=640x360",
         "-i", temp_wav,
         "-c:v", "libx264", "-tune", "stillimage",
