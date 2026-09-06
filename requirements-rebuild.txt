@@ -1,0 +1,9 @@
+# YTVoice Rebuild Dependencies (only needed to regenerate voice_sprites.bin)
+# Piper local neural TTS (provides the `piper` CLI). Amy model lives at X:\piper\voices.
+piper-tts>=1.2.0
+
+# Everything below is inherited from the main requirements (ffmpeg resolution,
+# audio encoding/decoding used during conversion and validation).
+imageio-ffmpeg>=0.4.9
+soundfile>=0.12.1
+numpy>=1.21.0
