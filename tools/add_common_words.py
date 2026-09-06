@@ -112,6 +112,9 @@ def main():
     ap.add_argument("--model", default=r"X:\piper\voices\en_US-amy-medium.onnx")
     ap.add_argument("--commit", action="store_true",
                     help="Write changes into the repo's bin/index (creates .bak)")
+    ap.add_argument("--bulk", type=int, default=0,
+                    help="Also synthesize the top-N most frequent English words "
+                         "from wordfreq that are missing from the index")
     args = ap.parse_args()
 
     config_path = args.model + ".json"
@@ -125,7 +128,21 @@ def main():
         index = json.load(f)
 
     to_add = [w for w in WORDS if w and w.islower() and w.isascii() and w not in index]
-    print(f"[*] {len(to_add)} words to synthesize ({len(WORDS) - len(to_add)} skipped)")
+
+    if args.bulk:
+        from wordfreq import top_n_list
+        bulk = set()
+        for w in top_n_list('en', args.bulk, wordlist='best'):
+            wl = w.lower()
+            if wl not in bulk and wl and wl.isalpha() and wl.isascii() and len(wl) > 1:
+                bulk.add(wl)
+        bulk -= set(index)
+        extra = sorted(bulk)
+        print(f"[*] Bulk: {len(extra)} missing words from top-{args.bulk} English "
+              f"frequency list")
+        to_add = sorted(set(to_add) | set(extra))
+
+    print(f"[*] {len(to_add)} words to synthesize")
 
     if not to_add:
         print("[*] Nothing to add.")

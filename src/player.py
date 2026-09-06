@@ -339,8 +339,10 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
                     except Exception:
                         pass
             
-            # Trim leading/trailing silence from the slice for crisp playback
-            nonsilent_ranges = detect_nonsilent(word_audio, min_silence_len=50, silence_thresh=-35)
+            # Trim leading/trailing silence from the slice for crisp playback.
+            # Use a low threshold (-50 dBFS) so quiet final fricatives (/f/, /s/,
+            # /th/) are preserved instead of being mistaken for silence.
+            nonsilent_ranges = detect_nonsilent(word_audio, min_silence_len=50, silence_thresh=-50)
             if nonsilent_ranges:
                 word_audio = word_audio[nonsilent_ranges[0][0] : nonsilent_ranges[-1][1]]
                 
