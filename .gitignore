@@ -1,9 +1,11 @@
 # Ignore voice assets and temporary chunks
 *.bin
 *.bin.index.json
+*.bak
 sprites/
 glitch/
 *.wav
 *.mp3
 *.mp4
 /tmp/
+__pycache__/
