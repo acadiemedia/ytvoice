@@ -1,7 +1,6 @@
 # YTVoice Core Playback Dependencies
+# (pure-Python IMA ADPCM decoder means binary mode needs no numpy/soundfile)
 pydub>=0.25.1
-numpy>=1.21.0
-soundfile>=0.12.1
 yt-dlp>=2023.01.01
 
 # Bundled static ffmpeg binary (used when ffmpeg/ffprobe are not on PATH)

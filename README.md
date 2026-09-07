@@ -76,6 +76,13 @@ cd ytvoice
 pip install -r requirements.txt
 ```
 
+**One-shot installer (recommended):** `./install.sh` does everything for you — Git LFS setup + database pull/skip, PEP 668 handling, dependency install, and an offline smoke test:
+```bash
+git clone https://github.com/acadiemedia/ytvoice.git
+cd ytvoice
+./install.sh
+```
+
 **PEP 668 externally-managed environments (Debian 12+ / Ubuntu 23.10+ / official Python images)**:
 Pip refuses to install with `error: externally-managed-environment`. Use either:
 

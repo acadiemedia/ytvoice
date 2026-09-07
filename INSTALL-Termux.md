@@ -27,6 +27,12 @@ pip install --break-system-packages -r requirements.txt
 python3 src/player.py "hello steve"
 ```
 
+**Prefer a one-shot setup?** Run the bundled installer instead — it clones nothing (run inside the repo), pulls LFS only when needed, handles PEP 668 automatically, and runs the smoke test:
+
+```bash
+./install.sh
+```
+
 ---
 
 ## Quick Install (PRoot Debian sandbox)
