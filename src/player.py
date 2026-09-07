@@ -19,6 +19,66 @@ configure_pydub()
 
 FFMPEG_EXE = get_ffmpeg_exe()
 
+# --- IMA ADPCM decode tables (standard) ---
+IMA_INDEX_STEP = (-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8)
+IMA_STEP = (7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31,
+            34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143,
+            157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544,
+            598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878,
+            2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894,
+            6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818,
+            18500, 20350, 22385, 24623, 27086, 29794, 32767)
+
+def decode_ima_adpcm(raw, block_align=1024):
+    """
+    Decode an IMA ADPCM sprite (WAV audio format 17) to raw 16-bit mono PCM
+    without any third-party dependency. Each block carries a 4-byte header
+    (int16 predictor, int8 step index, int8 reserved) followed by 4-bit nibbles.
+    """
+    data_start = None
+    data_end = 0
+    pos = 12
+    while pos + 8 <= len(raw):
+        cid = raw[pos:pos+4]
+        sz = int.from_bytes(raw[pos+4:pos+8], 'little')
+        if cid == b'data':
+            data_start = pos + 8
+            data_end = data_start + sz
+            break
+        pos += 8 + sz + (sz % 2)
+    if data_start is None:
+        return b""
+    payload = raw[data_start:data_end]
+
+    out = []
+    idx = 0
+    for blk_start in range(0, len(payload) - 4, block_align):
+        blk = payload[blk_start:blk_start + block_align]
+        pred = int.from_bytes(blk[0:2], 'little', signed=True)
+        idx = blk[2]
+        out.append(pred)
+        for byte in blk[4:]:
+            low = byte & 0x0F
+            high = byte >> 4
+            for nib in (low, high):
+                step = IMA_STEP[idx]
+                diff = (step >> 3)
+                if nib & 1:
+                    diff += (step >> 2)
+                if nib & 2:
+                    diff += (step >> 1)
+                if nib & 4:
+                    diff += step
+                pred = pred - diff if (nib & 8) else pred + diff
+                if pred > 32767:
+                    pred = 32767
+                elif pred < -32768:
+                    pred = -32768
+                idx = max(0, min(88, idx + IMA_INDEX_STEP[nib]))
+                out.append(pred)
+    return b''.join(v.to_bytes(2, 'little', signed=True) for v in out)
+
+
 class SpriteExtractor:
     def __init__(self, bin_path, index_path):
         self.bin_path = bin_path
@@ -446,12 +506,8 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
                             print(f"    [!] Failed to extract '{seg}' from binary database")
                             continue
                         try:
-                            import soundfile as sf
-                            import numpy as np
-                            data, sr = sf.read(io.BytesIO(raw_data))
-                            int16_samples = np.clip(data * 32767, -32768, 32767).astype(np.int16)
-                            pcm_bytes = int16_samples.tobytes()
-                            word_audio = AudioSegment(data=pcm_bytes, sample_width=2, frame_rate=sr, channels=1)
+                            pcm_bytes = decode_ima_adpcm(raw_data)
+                            word_audio = AudioSegment(data=pcm_bytes, sample_width=2, frame_rate=16000, channels=1)
                         except Exception as e:
                             print(f"    [-] Error decoding '{seg}' from binary database: {e}")
                             continue
@@ -540,8 +596,14 @@ if __name__ == "__main__":
     bin_source = args.bin
     index_source = args.index
     
-    # Auto-detect binary mode in current directory if no specific sources are passed
-    if not is_youtube and not args.bin:
+    # If --bin was explicitly passed, honor it (must not fall through to YouTube).
+    # --index defaults to voice_sprites.bin.index.json when --bin is given.
+    if args.bin:
+        is_binary_mode = True
+        if not index_source:
+            index_source = "voice_sprites.bin.index.json"
+    elif not is_youtube:
+        # Auto-detect binary mode in current directory if no specific sources are passed
         default_bin = "voice_sprites.bin"
         default_index = "voice_sprites.bin.index.json"
         if os.path.exists(default_bin) and os.path.exists(default_index):
