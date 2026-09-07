@@ -1,0 +1,100 @@
+{
+ "150 000 people die every day": [
+  {
+   "video_id": "C3BvRGECt2k",
+   "title": "OVER 150,000 PEOPLE DIE EVERY SINGLE DAY! WHERE ARE YOU GOING?",
+   "start_ms": 20262,
+   "end_ms": 21359,
+   "duration_ms": 1097,
+   "track": "auto"
+  }
+ ],
+ "i love you": [
+  {
+   "video_id": "lkvhcCd6_PY",
+   "title": "",
+   "start_ms": 59532,
+   "end_ms": 60079,
+   "duration_ms": 547,
+   "track": "auto"
+  },
+  {
+   "video_id": "YffdCMm6bZQ",
+   "title": "",
+   "start_ms": 32719,
+   "end_ms": 33520,
+   "duration_ms": 801,
+   "track": "auto"
+  },
+  {
+   "video_id": "xaOtiz1K9-w",
+   "title": "",
+   "start_ms": 274479,
+   "end_ms": 278120,
+   "duration_ms": 3641,
+   "track": "auto"
+  }
+ ],
+ "like and subscribe": [
+  {
+   "video_id": "5JudfYJrpto",
+   "title": "FREE Like & Subscribe Animation + How to Use It in DaVinci Resolve",
+   "start_ms": 5233,
+   "end_ms": 5920,
+   "duration_ms": 687,
+   "track": "auto"
+  },
+  {
+   "video_id": "YpiCjTkryl0",
+   "title": "Like And Subscribe | Official Adam Ray Comedy Special (NO ADS)",
+   "start_ms": 1246930,
+   "end_ms": 1247680,
+   "duration_ms": 750,
+   "track": "auto"
+  },
+  {
+   "video_id": "r_jKUPvRwLY",
+   "title": "the evolution of \"like and subscribe\"",
+   "start_ms": 39320,
+   "end_ms": 40079,
+   "duration_ms": 759,
+   "track": "auto"
+  },
+  {
+   "video_id": "YpiCjTkryl0",
+   "title": "Like And Subscribe | Official Adam Ray Comedy Special (NO ADS)",
+   "start_ms": 1174950,
+   "end_ms": 1175850,
+   "duration_ms": 900,
+   "track": "manual"
+  }
+ ],
+ "thanks for watching": [
+  {
+   "video_id": "0ahSdvkXM4E",
+   "title": "thanks for watching",
+   "start_ms": 911560,
+   "end_ms": 912190,
+   "duration_ms": 630,
+   "track": "auto"
+  },
+  {
+   "video_id": "nV_Aww8_6wQ",
+   "title": "Thanks for Watching",
+   "start_ms": 265318,
+   "end_ms": 271163,
+   "duration_ms": 5845,
+   "track": "auto"
+  }
+ ],
+ "every single second": [
+  {
+   "video_id": "BdTGkd_sbNs",
+   "title": "BdTGkd_sbNs",
+   "start_ms": 8873,
+   "end_ms": 10160,
+   "duration_ms": 1287,
+   "track": "auto"
+  }
+ ]
+}

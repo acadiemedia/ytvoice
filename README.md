@@ -140,6 +140,30 @@ This expands your vocabulary coverage dynamically without manually compiling new
 ### 2. On-Demand Local Caching
 When in YouTube mode, each fetched word segment is saved locally inside a `.yt_cache/` directory. Subsequent playback of the same word reads it directly from disk. If all words in a sentence are cached, the engine **bypasses YouTube and the network entirely**, starting playback in under 50ms.
 
+### 3. YouTube Phrase Voice ("Bumblebee" Real Speech)
+Phrases can be mined directly from real YouTube speech. `tools/add_youtube_phrases.py` searches YouTube, downloads the auto-caption word-timeline for each hit video, locates exact phrase occurrences, and records `(video_id, start_ms, end_ms)` candidates into `phrase_db.json`. The player then splices those exact spoken moments out of the source videos and stitches multi-phrase sentences together — playing back *actual humans* saying the words, not synthesized approximations.
+
+```bash
+# Search YouTube and build a candidate slice for each phrase
+python3 tools/add_youtube_phrases.py "i love you" "thanks for watching" --commit
+
+# Harvest every listed phrase from specific videos the search missed
+python3 tools/add_youtube_phrases.py "every single second" --video BdTGkd_sbNs --commit
+
+# Slice n-grams from a full sentence
+python3 tools/add_youtube_phrases.py --sentence "i love you every single second" --min-words 3 --max-words 6 --commit
+```
+
+Then speak with automatic longest-phrase matching, falling back to word sprites:
+
+```bash
+python3 src/player.py "i love you every single second" --bin voice_sprites.bin --index voice_sprites.bin.index.json
+```
+
+* Phrase matching is **greedy-longest-first**: if a spoken n-gram exists in `phrase_db.json`, that exact real speech slice wins over word-sprite stitching.
+* Slices from many different videos mix seamlessly: each clip is resampled to 16 kHz mono and loudness-normalized (~ -18 dBFS), then edge-trimmed.
+* Phrase slices are cached in `.yt_cache/phrases/`, so repeat playback never touches the network.
+
 ---
 
 ## 🛠️ CLI Flags Help
@@ -156,6 +180,8 @@ Run `python3 src/player.py --help` to see all available execution flags:
 | `--bin` | `voice_sprites.bin` | Path to the binary ADPCM database file. |
 | `--index` | `voice_sprites.bin.index.json` | Path to the JSON binary index mapping. |
 | `--download` | `None` | Bootstraps both `srt` and `mp4` locally from YouTube for offline usage. |
+| `--phrase-db` | `phrase_db.json` | Path to the phrase database built by `tools/add_youtube_phrases.py`. |
+| `--no-play` | `False` | Export the stitched audio to the temp file without playing it. |
 
 ---
 

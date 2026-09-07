@@ -94,6 +94,43 @@ def segment_word(word, word_map):
                 return [prefix] + suffix_segments
     return None
 
+class PhraseMatcher:
+    """
+    Greedy longest-phrase matching against a phrase database (phrase_db.json)
+    built by tools/add_youtube_phrases.py. Phrases win over word sprites; the
+    player falls back to word segmentation for anything un-phrased.
+    """
+    def __init__(self, db_path):
+        self.db_path = db_path
+        self.phrases = {}  # normalized key -> list of candidate dicts
+        self.max_len = 0
+        self.load(db_path)
+
+    def load(self, db_path):
+        import json
+        if not db_path or not os.path.exists(db_path):
+            return
+        with open(db_path, "r", encoding="utf-8") as f:
+            db = json.load(f)
+        for key, candidates in db.items():
+            norm = key.strip().lower()
+            if norm and candidates:
+                self.phrases[norm] = candidates
+                wc = len(norm.split())
+                if wc > self.max_len:
+                    self.max_len = wc
+
+    def find_longest(self, words, start_idx):
+        """Return (key, word_count, candidates) for the longest phrase starting
+        at start_idx, or None if no phrase starts there."""
+        max_try = min(self.max_len, len(words) - start_idx)
+        for count in range(max_try, 0, -1):
+            key = " ".join(words[start_idx:start_idx + count])
+            cands = self.phrases.get(key)
+            if cands:
+                return key, count, cands
+        return None
+
 def fetch_youtube_subtitles(video_id_or_url):
     print(f"[*] Fetching subtitles directly from YouTube: {video_id_or_url}...")
     url = video_id_or_url
@@ -179,10 +216,12 @@ def get_youtube_audio_url(video_id_or_url):
         print(f"[!] yt-dlp error: Failed to retrieve video stream. {e.stderr.strip()}")
         return None
 
-def extract_audio_slice(source_path_or_url, start_ms, duration_ms):
+def extract_audio_slice(source_path_or_url, start_ms, duration_ms, normalize=False):
     """
     Slices a small segment of audio from a local file or remote URL on-the-fly
     using ffmpeg range seeks, keeping memory overhead minimal.
+    When normalize=True the segment is resampled to 16kHz mono so clips from
+    different videos mix at a consistent sample rate with the sprite DB.
     """
     start_sec = start_ms / 1000.0
     dur_sec = duration_ms / 1000.0
@@ -191,15 +230,31 @@ def extract_audio_slice(source_path_or_url, start_ms, duration_ms):
         "-ss", f"{start_sec:.3f}",
         "-t", f"{dur_sec:.3f}",
         "-i", source_path_or_url,
-        "-f", "wav",
-        "-"
     ]
+    if normalize:
+        cmd += ["-ar", "16000", "-ac", "1"]
+    cmd += ["-f", "wav", "-"]
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         wav_bytes, _ = p.communicate()
         return wav_bytes
     except FileNotFoundError:
         return b""
+
+def normalize_loudness(segment, target_dbfs=-18.0, max_gain_db=12.0):
+    """
+    Bring a decoded clip toward a target average loudness so phrases sliced
+    from different videos don't jump wildly in volume.
+    """
+    try:
+        loudness = segment.dBFS
+        if loudness == float("-inf"):
+            return segment
+        gain_db = target_dbfs - loudness
+        gain_db = max(-max_gain_db, min(gain_db, max_gain_db))
+        return segment.apply_gain(gain_db)
+    except Exception:
+        return segment
 
 def _try_play(cmd):
     try:
@@ -243,9 +298,25 @@ def play_audio(file_path):
 
     print(f"[!] Could not play audio automatically. Output file saved at: {file_path}")
 
-def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, cache_dir=None, bin_source=None, index_source=None):
+def _phrase_tokenize(text):
+    """Tokenize sentence text exactly like tools/add_youtube_phrases.py so
+    phrase keys line up with the phrase DB (punctuation -> space, apostrophes
+    kept)."""
+    import re as _re
+    return _re.sub(r"[^0-9a-z\s']", " ", text.lower()).split()
+
+
+def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, cache_dir=None, bin_source=None, index_source=None, phrase_db_path=None, no_play=False):
     word_map = {}
     extractor = None
+    matcher = None
+    
+    if phrase_db_path and os.path.exists(phrase_db_path):
+        print(f"[*] Booting phrase database mode: {phrase_db_path}")
+        matcher = PhraseMatcher(phrase_db_path)
+        if not matcher.phrases:
+            print("[!] phrase_db.json present but empty; continuing with word sprites only.")
+            matcher = None
     
     if bin_source and index_source:
         try:
@@ -264,101 +335,177 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
         sys.exit(1)
         
     stream_url = None
+    video_stream_urls = {}  # video_id -> resolved stream URL (phrases)
     
     if cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
     
-    # Secure punctuation cleansing pattern
-    clean_sentence = sentence.translate(str.maketrans('', '', string.punctuation))
-    words = clean_sentence.lower().split()
+    tokens = _phrase_tokenize(sentence)
     output_audio = AudioSegment.empty()
     
-    # Expand composite/unknown words into sub-word tokens
-    processed_words = []
-    for w in words:
+    # Build a plan: phrases win greedily; leftover words go to the word pipeline.
+    plan = []
+    i = 0
+    while i < len(tokens):
+        if matcher:
+            hit = matcher.find_longest(tokens, i)
+            if hit:
+                key, count, cands = hit
+                plan.append(("phrase", key, cands))
+                i += count
+                continue
+        plan.append(("word", tokens[i]))
+        i += 1
+
+    print(f"[*] Stitching sentence: '{sentence}'")
+    from pydub.silence import detect_nonsilent
+    
+    pi = 0
+    while pi < len(plan):
+        item = plan[pi]
+        kind = item[0]
+        if kind == "phrase":
+            key, cands = item[1], item[2]
+            phrase_audio = None
+            for cand in cands:
+                video_id = cand.get("video_id")
+                start_ms = cand.get("start_ms", 0)
+                end_ms = cand.get("end_ms", start_ms)
+                duration_ms = max(1, end_ms - start_ms)
+                cache_file = None
+                if cache_dir and video_id:
+                    cache_file = os.path.join(cache_dir, "phrases",
+                                              f"{video_id}_{start_ms}_{end_ms}.wav")
+                    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+                    if os.path.exists(cache_file):
+                        print(f"  - [Phrase Cache Hit] '{key}' ({video_id})")
+                        try:
+                            phrase_audio = AudioSegment.from_file(cache_file, format="wav")
+                            break
+                        except Exception:
+                            phrase_audio = None
+                if phrase_audio is not None:
+                    break
+                if not video_id:
+                    continue
+                try:
+                    if video_id not in video_stream_urls:
+                        video_stream_urls[video_id] = get_youtube_audio_url(video_id)
+                    url = video_stream_urls.get(video_id)
+                    if not url:
+                        continue
+                    wav_bytes = extract_audio_slice(url, start_ms, duration_ms, normalize=True)
+                    if not wav_bytes:
+                        print(f"    [!] Failed to slice '{key}' from {video_id}")
+                        continue
+                    phrase_audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
+                    if cache_file:
+                        try:
+                            phrase_audio.export(cache_file, format="wav")
+                        except Exception:
+                            pass
+                    break
+                except Exception as e:
+                    print(f"    [!] Phrase '{key}' from {video_id} failed: {e}")
+                    phrase_audio = None
+                    continue
+            if phrase_audio is None:
+                print(f"  - Phrase '{key}' had no usable candidates; falling back to word sprites.")
+                for w in key.split():
+                    plan.insert(pi + 1, ("word", w))
+                pi += 1
+                continue
+            # Normalize loudness so clips from different videos don't jump.
+            phrase_audio = normalize_loudness(phrase_audio)
+            nonsilent_ranges = detect_nonsilent(phrase_audio, min_silence_len=50, silence_thresh=-50)
+            if nonsilent_ranges:
+                phrase_audio = phrase_audio[nonsilent_ranges[0][0] : nonsilent_ranges[-1][1]]
+            output_audio += phrase_audio
+            output_audio += AudioSegment.silent(duration=35)
+            print(f"  - Phrase matched: '{key}' ({len(cands)} candidates)")
+            pi += 1
+            continue
+        
+        # "word" item: existing word pipeline.
+        w = item[1]
         segments = segment_word(w, word_map)
         if segments:
             for seg in segments:
-                processed_words.append((seg, True))
-        else:
-            processed_words.append((w, False))
-            
-    print(f"[*] Stitching sentence: '{sentence}'")
-    from pydub.silence import detect_nonsilent
-    for w, is_found in processed_words:
-        if is_found:
-            # Check cache
-            cached_path = None
-            if cache_dir:
-                cached_path = os.path.join(cache_dir, f"{w}.wav")
-                
-            if cached_path and os.path.exists(cached_path):
-                print(f"  - [Cache Hit] '{w}' loaded locally.")
-                word_audio = AudioSegment.from_file(cached_path, format="wav")
-            else:
-                if extractor:
-                    raw_data = extractor.extract_sprite(w)
-                    if not raw_data:
-                        print(f"    [!] Failed to extract '{w}' from binary database")
-                        continue
-                    try:
-                        import soundfile as sf
-                        import numpy as np
-                        data, sr = sf.read(io.BytesIO(raw_data))
-                        int16_samples = np.clip(data * 32767, -32768, 32767).astype(np.int16)
-                        pcm_bytes = int16_samples.tobytes()
-                        word_audio = AudioSegment(data=pcm_bytes, sample_width=2, frame_rate=sr, channels=1)
-                    except Exception as e:
-                        print(f"    [-] Error decoding '{w}' from binary database: {e}")
-                        continue
+                # Check cache
+                cached_path = None
+                if cache_dir:
+                    cached_path = os.path.join(cache_dir, f"{seg}.wav")
+                    
+                if cached_path and os.path.exists(cached_path):
+                    print(f"  - [Cache Hit] '{seg}' loaded locally.")
+                    word_audio = AudioSegment.from_file(cached_path, format="wav")
                 else:
-                    start_ms, duration_ms = word_map[w]
-                    print(f"  - Found '{w}': seek to {start_ms}ms, duration {duration_ms}ms")
-                    if is_youtube:
-                        # Lazy resolve URL on-demand
-                        if not stream_url:
-                            stream_url = get_youtube_audio_url(audio_source)
-                            if not stream_url:
-                                print("[Error] Failed to resolve YouTube audio stream URL.")
-                                sys.exit(1)
-                        wav_bytes = extract_audio_slice(stream_url, start_ms, duration_ms)
+                    if extractor:
+                        raw_data = extractor.extract_sprite(seg)
+                        if not raw_data:
+                            print(f"    [!] Failed to extract '{seg}' from binary database")
+                            continue
+                        try:
+                            import soundfile as sf
+                            import numpy as np
+                            data, sr = sf.read(io.BytesIO(raw_data))
+                            int16_samples = np.clip(data * 32767, -32768, 32767).astype(np.int16)
+                            pcm_bytes = int16_samples.tobytes()
+                            word_audio = AudioSegment(data=pcm_bytes, sample_width=2, frame_rate=sr, channels=1)
+                        except Exception as e:
+                            print(f"    [-] Error decoding '{seg}' from binary database: {e}")
+                            continue
                     else:
-                        # Slice local media file on-the-fly
-                        wav_bytes = extract_audio_slice(audio_source, start_ms, duration_ms)
-                        
-                    if not wav_bytes:
-                        print(f"    [!] Failed to extract '{w}'")
-                        continue
-                    word_audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
+                        start_ms, duration_ms = word_map[seg]
+                        print(f"  - Found '{seg}': seek to {start_ms}ms, duration {duration_ms}ms")
+                        if is_youtube:
+                            # Lazy resolve URL on-demand
+                            if not stream_url:
+                                stream_url = get_youtube_audio_url(audio_source)
+                                if not stream_url:
+                                    print("[Error] Failed to resolve YouTube audio stream URL.")
+                                    sys.exit(1)
+                            wav_bytes = extract_audio_slice(stream_url, start_ms, duration_ms)
+                        else:
+                            # Slice local media file on-the-fly
+                            wav_bytes = extract_audio_slice(audio_source, start_ms, duration_ms)
+                            
+                        if not wav_bytes:
+                            print(f"    [!] Failed to extract '{seg}'")
+                            continue
+                        word_audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
+                    
+                    # Save to local cache dir
+                    if cached_path:
+                        try:
+                            word_audio.export(cached_path, format="wav")
+                            print(f"    [+] Cached '{seg}' -> {cached_path}")
+                        except Exception:
+                            pass
                 
-                # Save to local cache dir
-                if cached_path:
-                    try:
-                        word_audio.export(cached_path, format="wav")
-                        print(f"    [+] Cached '{w}' -> {cached_path}")
-                    except Exception:
-                        pass
-            
-            # Trim leading/trailing silence from the slice for crisp playback.
-            # Use a low threshold (-50 dBFS) so quiet final fricatives (/f/, /s/,
-            # /th/) are preserved instead of being mistaken for silence.
-            nonsilent_ranges = detect_nonsilent(word_audio, min_silence_len=50, silence_thresh=-50)
-            if nonsilent_ranges:
-                word_audio = word_audio[nonsilent_ranges[0][0] : nonsilent_ranges[-1][1]]
-                
-            output_audio += word_audio
-            output_audio += AudioSegment.silent(duration=35)
+                # Trim leading/trailing silence from the slice for crisp playback.
+                # Use a low threshold (-50 dBFS) so quiet final fricatives (/f/, /s/,
+                # /th/) are preserved instead of being mistaken for silence.
+                nonsilent_ranges = detect_nonsilent(word_audio, min_silence_len=50, silence_thresh=-50)
+                if nonsilent_ranges:
+                    word_audio = word_audio[nonsilent_ranges[0][0] : nonsilent_ranges[-1][1]]
+                    
+                output_audio += word_audio
+                output_audio += AudioSegment.silent(duration=35)
+            pi += 1
         else:
             print(f"  - Word '{w}' not found in database! Playing short beep.")
             from pydub.generators import Sine
             beep = Sine(440).to_audio_segment(duration=150).fade_out(10)
             output_audio += beep
             output_audio += AudioSegment.silent(duration=100)
+            pi += 1
             
     temp_out = os.path.join(tempfile.gettempdir(), "playhead_proof.wav")
     output_audio.export(temp_out, format="wav")
     print(f"[+] Stitched audio exported to {temp_out}")
-    play_audio(temp_out)
+    if not no_play:
+        play_audio(temp_out)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="YTVoice Playhead Synthesizer")
@@ -370,6 +517,8 @@ if __name__ == "__main__":
     parser.add_argument("--bin", help="Path to the binary database file (e.g. voice_sprites.bin)")
     parser.add_argument("--index", help="Path to the JSON index file (e.g. voice_sprites.bin.index.json)")
     parser.add_argument("--download", help="Bootstrap and download both SRT and MP4 master files locally from a YouTube ID/URL for offline use")
+    parser.add_argument("--phrase-db", default="phrase_db.json", help="Path to the phrase database (from tools/add_youtube_phrases.py)")
+    parser.add_argument("--no-play", action="store_true", help="Export audio without playing it")
     
     args = parser.parse_args()
     
@@ -444,4 +593,6 @@ if __name__ == "__main__":
                         is_youtube=is_youtube, 
                         cache_dir=args.cache_dir,
                         bin_source=bin_source,
-                        index_source=index_source)
+                        index_source=index_source,
+                        phrase_db_path=args.phrase_db,
+                        no_play=args.no_play)
