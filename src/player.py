@@ -379,14 +379,9 @@ def synthesize_sentence(sentence, srt_source, audio_source, is_youtube=False, ca
             matcher = None
     
     if bin_source and index_source:
-        try:
-            print(f"[*] Booting local binary database mode (direct byte seeks): {bin_source}")
-            extractor = SpriteExtractor(bin_source, index_source)
-            word_map = {k: (0, 0) for k in extractor.index.keys()}
-        except ImportError:
-            print("[Error] To use the local binary database (voice_sprites.bin), you must install soundfile and numpy.")
-            print("Run: pip install -r requirements-compiler.txt")
-            sys.exit(1)
+        print(f"[*] Booting local binary database mode (direct byte seeks): {bin_source}")
+        extractor = SpriteExtractor(bin_source, index_source)
+        word_map = {k: (0, 0) for k in extractor.index.keys()}
     else:
         word_map = parse_srt(srt_source)
         

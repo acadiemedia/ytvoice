@@ -23,7 +23,7 @@ graph TD
     CacheCheck -->|Cache Hit: 0ms| Stitcher["Stitcher Buffer"]
     CacheCheck -->|Cache Miss| ModeDetect{"Auto-Detect Mode"}
     
-    ModeDetect -->|1. Binary Database Mode: voice_sprites.bin| DiskSeek["Direct Disk Byte Seek (numpy/soundfile)"]
+    ModeDetect -->|1. Binary Database Mode: voice_sprites.bin| DiskSeek["Direct Disk Byte Seek (pure-Python IMA decoder)"]
     ModeDetect -->|2. Local Media Mode: database_speech.mp4| LocalFFmpeg["Local Disk Seek (ffmpeg subprocess)"]
     ModeDetect -->|3. YouTube Cloud Mode: default ID r-WQt6Hi86Y| RemoteFFmpeg["HTTP Range Seek (yt-dlp + ffmpeg)"]
     
@@ -110,10 +110,13 @@ python3 src/player.py "hello steve online active"
 
 ### Mode 2: High-Performance Binary Database Mode (Default Offline)
 If `voice_sprites.bin` and `voice_sprites.bin.index.json` are present in your current directory, the engine boots into high-speed binary seek mode. It queries exact byte offsets from the disk with **0ms seek latency** and zero external subprocess calls.
-* **Note**: This mode requires the compiler libraries to parse ADPCM binary files:
+* **No extra dependencies needed**: Binary mode decodes the IMA ADPCM sprites with a built-in pure-Python decoder — only `pydub` is required (no `numpy`/`soundfile`):
   ```bash
-  pip install -r requirements-compiler.txt
   python3 src/player.py "hello steve online active"
+  ```
+* To force binary mode explicitly (when it wouldn't auto-detect), pass `--bin`:
+  ```bash
+  python3 src/player.py "hello steve" --bin voice_sprites.bin
   ```
 
 ### Mode 3: Local MP4 Media Mode (Low-Memory Offline)
@@ -203,13 +206,12 @@ python3 src/player.py "hello steve" --youtube
 ```
 Or run from a directory that does not contain the `.bin`/`.index.json` files.
 
-### 4. Binary mode only works when compiler deps are installed
-**Cause:** The `.bin` reader needs `soundfile` + `numpy` (plus `imageio-ffmpeg` for ffmpeg resolution). The main CLI catches the `ImportError` and exits with instructions.
-**Fix:**
+### 4. Explicit `--bin` flag was ignored (fixed)
+**Cause (fixed in `ece339e`):** Passing `--bin voice_sprites.bin` used to make the auto-detection block skip *and* leave binary mode off, so the engine fell through to YouTube streaming ("No local database assets found. Defaulting to YouTube..."). It was impossible to force binary mode via CLI.
+**Fix:** Now `--bin` forces binary mode directly (and `--index` defaults to `voice_sprites.bin.index.json` when omitted):
 ```bash
-pip install -r requirements-compiler.txt
+python3 src/player.py "hello steve" --bin voice_sprites.bin
 ```
-This is already covered if you installed `requirements.txt` (which includes all three).
 
 ### 5. No audio output / silent playback on Termux/Android PRoot
 **Cause:** PRoot sandboxes have no direct audio device access — the PRoot `mpv`/`ffplay` cannot open an audio sink.
